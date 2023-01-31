@@ -39,9 +39,11 @@ packages:
   bdk_flutter:
     dependency: "direct main"
     description:
-      name: bdk_flutter
-      url: "https://pub.dartlang.org"
-    source: hosted
+      path: "."
+      ref: master
+      resolved-ref: "4d5e99cd7a895696ff46b7abeb6a18dd6f93e77a"
+      url: "https://github.com/XLTBLX-Tech/bdk-flutter"
+    source: git
     version: "0.3.0"
   boolean_selector:
     dependency: transitive
