@@ -1,5 +1,5 @@
 PODS:
-  - bdk_flutter (0.3.2):
+  - bdk_flutter (0.27.1):
     - Flutter
   - Flutter (1.0.0)
 
@@ -14,7 +14,7 @@ EXTERNAL SOURCES:
     :path: Flutter
 
 SPEC CHECKSUMS:
-  bdk_flutter: 6ac109aad098d9c4b4359cadc8fa728eb00d0f37
+  bdk_flutter: ed118d61ae54677245260b0670a4cc32026a002d
   Flutter: f04841e97a9d0b0a8025694d0796dd46242b2854
 
 PODFILE CHECKSUM: 4e8f8b2be68aeea4c0d5beb6ff1e79fface1d048
