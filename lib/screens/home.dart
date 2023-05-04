@@ -111,7 +111,7 @@ class _HomeState extends State<Home> {
           .addRecipient(script, amount)
           .feeRate(1.0)
           .finish(wallet);
-      final sbt = await wallet.sign(txBuilderResult.psbt);
+      final sbt = await wallet.sign(psbt: txBuilderResult.psbt);
       final tx = await sbt.extractTx();
       await blockchain.broadcast(tx);
       setState(() {
