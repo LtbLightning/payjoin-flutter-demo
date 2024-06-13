@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:bdk_flutter/bdk_flutter.dart';
+import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,17 +16,22 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  late Wallet wallet;
+  late Wallet senderWallet;
+  late Wallet receiverWallet;
   late Blockchain blockchain;
   String? displayText;
-  String? address;
-  String? balance;
+  String? senderAddress;
+  String? receiverAddress;
+  String? senderBalance;
+  String? receiverBalance;
+  int payjoinAmount = 1000;
   TextEditingController mnemonic = TextEditingController();
   TextEditingController recipientAddress = TextEditingController();
-  TextEditingController amount = TextEditingController();
+  TextEditingController amountController = TextEditingController();
   bool isPayjoinEnabled = false;
   bool isReceiver = false;
   FeeRangeEnum feeRange = FeeRangeEnum.high;
+  PayjoinManager payjoinManager = PayjoinManager();
   generateMnemonicHandler() async {
     var res = await (await Mnemonic.create(WordCount.words12)).asString();
 
@@ -57,8 +65,8 @@ class _HomeState extends State<Home> {
     }
   }
 
-  createOrRestoreWallet(
-      String mnemonic, Network network, String? password, String path) async {
+  createOrRestoreWallet(String mnemonic, Network network, String? password,
+      String path, Wallet wallet, address) async {
     try {
       final descriptors = await getDescriptors(mnemonic);
       await blockchainInit();
@@ -70,7 +78,7 @@ class _HomeState extends State<Home> {
       setState(() {
         wallet = res;
       });
-      var addressInfo = await getNewAddress();
+      var addressInfo = await getNewAddress(wallet, address);
       address = await addressInfo.address.asString();
       setState(() {
         displayText = "Wallet Created: $address";
@@ -82,7 +90,7 @@ class _HomeState extends State<Home> {
     }
   }
 
-  getBalance() async {
+  getBalance(wallet, balance) async {
     final balanceObj = await wallet.getBalance();
     final res = "Total Balance: ${balanceObj.total.toString()}";
     if (kDebugMode) {
@@ -94,7 +102,7 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<AddressInfo> getNewAddress() async {
+  Future<AddressInfo> getNewAddress(wallet, address) async {
     final res =
         await wallet.getAddress(addressIndex: const AddressIndex.increase());
     if (kDebugMode) {
@@ -107,7 +115,7 @@ class _HomeState extends State<Home> {
     return res;
   }
 
-  sendTx(String addressStr, int amount) async {
+  Future<void> sendTx(String addressStr, int amount) async {
     try {
       final txBuilder = TxBuilder();
       final address =
@@ -117,9 +125,9 @@ class _HomeState extends State<Home> {
       final psbt = await txBuilder
           .addRecipient(script, amount)
           .feeRate(1.0)
-          .finish(wallet);
+          .finish(senderWallet);
 
-      final isFinalized = await wallet.sign(psbt: psbt.$1);
+      final isFinalized = await senderWallet.sign(psbt: psbt.$1);
       if (isFinalized) {
         final tx = await psbt.$1.extractTx();
         final res = await blockchain.broadcast(transaction: tx);
@@ -138,16 +146,21 @@ class _HomeState extends State<Home> {
     }
   }
 
+  ///Step2:electrum client
   blockchainInit() async {
+    String esploraUrl =
+        Platform.isAndroid ? 'http://10.0.2.2:30000' : 'http://127.0.0.1:30000';
     try {
       blockchain = await Blockchain.create(
-          config: const BlockchainConfig.electrum(
+          config: BlockchainConfig.esplora(
+              config: EsploraConfig(baseUrl: esploraUrl, stopGap: 10)));
+      /* const BlockchainConfig.electrum(
               config: ElectrumConfig(
                   stopGap: 10,
                   timeout: 5,
                   retry: 5,
                   url: "ssl://electrum.blockstream.info:60002",
-                  validateDomain: false)));
+                  validateDomain: false)) */
     } on Exception catch (e) {
       setState(() {
         displayText = "Error: ${e.toString()}";
@@ -155,13 +168,13 @@ class _HomeState extends State<Home> {
     }
   }
 
-  syncWallet() async {
+  Future<void> syncWallet(wallet) async {
     wallet.sync(blockchain: blockchain);
   }
 
-  changePayjoin(bool value) async {
-    final uri =
-        buildPjUri(10000000, "https://testnet.demo.btcpayserver.org/BTC/pj");
+  Future<void> changePayjoin(bool value) async {
+    final uri = payjoinManager.buildPjUri(
+        10000000, "https://testnet.demo.btcpayserver.org/BTC/pj");
 
     setState(() {
       isPayjoinEnabled = value;
@@ -169,29 +182,18 @@ class _HomeState extends State<Home> {
     });
   }
 
-  changeFrom(bool value) async {
+  Future<void> changeFrom(bool value) async {
     setState(() {
       isReceiver = value;
     });
   }
 
-  chooseFeeRange() async {
+  Future<void> chooseFeeRange() async {
     feeRange = await showModalBottomSheet(
       context: context,
       builder: (context) => const SelectFeeRange(),
       constraints: const BoxConstraints.tightFor(height: 300),
     );
-  }
-
-  Uri buildPjUri(double amount, String pj) {
-    try {
-      final pjUri =
-          "tb1q5tsjcyz7xmet07yxtumakt739y53hcttmntajq?amount=${amount / 100000000.0}&pj=$pj";
-      return Uri.dataFromString(pjUri);
-    } catch (e) {
-      debugPrint(e.toString());
-      rethrow;
-    }
   }
 
   @override
@@ -209,7 +211,7 @@ class _HomeState extends State<Home> {
               children: [
                 /* Balance */
                 BalanceContainer(
-                  text: "${balance ?? "0"} Sats",
+                  text: "${senderBalance ?? "0"} Sats",
                 ),
                 /* Result */
                 ResponseContainer(
@@ -237,25 +239,30 @@ class _HomeState extends State<Home> {
                       SubmitButton(
                         text: "Create Wallet",
                         callback: () async {
-                          await createOrRestoreWallet(mnemonic.text,
-                              Network.testnet, "password", "m/84'/1'/0'");
+                          await createOrRestoreWallet(
+                              mnemonic.text,
+                              Network.testnet,
+                              "password",
+                              "m/84'/1'/0'",
+                              senderWallet,
+                              senderAddress);
                         },
                       ),
                       SubmitButton(
                         text: "Sync Wallet",
                         callback: () async {
-                          await syncWallet();
+                          await syncWallet(senderWallet);
                         },
                       ),
                       SubmitButton(
                         callback: () async {
-                          await getBalance();
+                          await getBalance(senderWallet, senderBalance);
                         },
                         text: "Get Balance",
                       ),
                       SubmitButton(
                           callback: () async {
-                            await getNewAddress();
+                            await getNewAddress(senderWallet, senderAddress);
                           },
                           text: "Get Address"),
                     ])),
@@ -292,11 +299,12 @@ class _HomeState extends State<Home> {
 
   onSendBit(formKey) async {
     if (formKey.currentState!.validate()) {
-      await sendTx(recipientAddress.text, int.parse(amount.text));
+      await sendTx(recipientAddress.text, int.parse(amountController.text));
     }
   }
 
   onPerformPayjoin() {
+    payjoinManager.performPayjoin();
     String psbt =
         """cHNidP8BAFUCAAAAASeaIyOl37UfxF8iD6WLD8E+HjNCeSqF1+Ns1jM7XLw5AAAAAAD/////AaBa6gsAAAAAGXapFP/pwAYQl8w7Y28ssEYPpPxCfStFiKwAAAAAAAEBIJVe6gsAAAAAF6kUY0UgD2jRieGtwN8cTRbqjxTA2+uHIgIDsTQcy6doO2r08SOM1ul+cWfVafrEfx5I1HVBhENVvUZGMEMCIAQktY7/qqaU4VWepck7v9SokGQiQFXN8HC2dxRpRC0HAh9cjrD+plFtYLisszrWTt5g6Hhb+zqpS5m9+GFR25qaAQEEIgAgdx/RitRZZm3Unz1WTj28QvTIR3TjYK2haBao7UiNVoEBBUdSIQOxNBzLp2g7avTxI4zW6X5xZ9Vp+sR/HkjUdUGEQ1W9RiED3lXR4drIBeP4pYwfv5uUwC89uq/hJ/78pJlfJvggg71SriIGA7E0HMunaDtq9PEjjNbpfnFn1Wn6xH8eSNR1""";
     return showModalBottomSheet(
@@ -346,7 +354,7 @@ class _HomeState extends State<Home> {
         ),
         TextFieldContainer(
           child: TextFormField(
-            controller: amount,
+            controller: amountController,
             validator: (value) {
               if (value == null || value.isEmpty) {
                 return 'Please enter the amount';
@@ -416,5 +424,21 @@ class _HomeState extends State<Home> {
         ]
       ],
     );
+  }
+
+  ///Step1:This func will return receiver wallet
+  Future<void> initReceiverWallet() async {
+    String receiverMnemonic =
+        await (await Mnemonic.create(WordCount.words12)).asString();
+    await createOrRestoreWallet(receiverMnemonic, Network.testnet, "password",
+        "m/84'/1'/0'", receiverWallet, receiverAddress);
+    await syncWallet(receiverWallet);
+    await getReceiverAddress();
+    await getBalance(receiverWallet, receiverBalance);
+  }
+
+  ///Step3:Get receiver address
+  getReceiverAddress() async {
+    return await getNewAddress(receiverWallet, receiverAddress);
   }
 }

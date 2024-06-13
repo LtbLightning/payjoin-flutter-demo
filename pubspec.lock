@@ -299,6 +299,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.8.3"
+  payjoin_flutter:
+    dependency: "direct main"
+    description:
+      path: "../../XLTBLXTech/payjoin/payjoin-flutter"
+      relative: true
+    source: path
+    version: "0.13.0"
   pub_semver:
     dependency: transitive
     description:
@@ -425,5 +432,5 @@ packages:
     source: hosted
     version: "3.1.1"
 sdks:
-  dart: ">=3.2.0-194.0.dev <4.0.0"
-  flutter: ">=3.0.0"
+  dart: ">=3.2.3 <4.0.0"
+  flutter: ">=3.3.0"
