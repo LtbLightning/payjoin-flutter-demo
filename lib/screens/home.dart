@@ -5,6 +5,7 @@ import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/send.dart' as send;
 
 import '../widgets/widgets.dart';
 
@@ -16,15 +17,11 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  late Wallet senderWallet;
-  late Wallet receiverWallet;
+  late Wallet wallet;
   late Blockchain blockchain;
   String? displayText;
-  String? senderAddress;
-  String? receiverAddress;
-  String? senderBalance;
-  String? receiverBalance;
-  int payjoinAmount = 1000;
+  String? address;
+  String? balance;
   TextEditingController mnemonic = TextEditingController();
   TextEditingController recipientAddress = TextEditingController();
   TextEditingController amountController = TextEditingController();
@@ -65,8 +62,12 @@ class _HomeState extends State<Home> {
     }
   }
 
-  createOrRestoreWallet(String mnemonic, Network network, String? password,
-      String path, Wallet wallet, address) async {
+  createOrRestoreWallet(
+    String mnemonic,
+    Network network,
+    String? password,
+    String path,
+  ) async {
     try {
       final descriptors = await getDescriptors(mnemonic);
       await blockchainInit();
@@ -78,7 +79,7 @@ class _HomeState extends State<Home> {
       setState(() {
         wallet = res;
       });
-      var addressInfo = await getNewAddress(wallet, address);
+      var addressInfo = await getNewAddress();
       address = await addressInfo.address.asString();
       setState(() {
         displayText = "Wallet Created: $address";
@@ -90,7 +91,7 @@ class _HomeState extends State<Home> {
     }
   }
 
-  getBalance(wallet, balance) async {
+  getBalance() async {
     final balanceObj = await wallet.getBalance();
     final res = "Total Balance: ${balanceObj.total.toString()}";
     if (kDebugMode) {
@@ -102,7 +103,7 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<AddressInfo> getNewAddress(wallet, address) async {
+  Future<AddressInfo> getNewAddress() async {
     final res =
         await wallet.getAddress(addressIndex: const AddressIndex.increase());
     if (kDebugMode) {
@@ -125,9 +126,9 @@ class _HomeState extends State<Home> {
       final psbt = await txBuilder
           .addRecipient(script, amount)
           .feeRate(1.0)
-          .finish(senderWallet);
+          .finish(wallet);
 
-      final isFinalized = await senderWallet.sign(psbt: psbt.$1);
+      final isFinalized = await wallet.sign(psbt: psbt.$1);
       if (isFinalized) {
         final tx = await psbt.$1.extractTx();
         final res = await blockchain.broadcast(transaction: tx);
@@ -146,7 +147,14 @@ class _HomeState extends State<Home> {
     }
   }
 
-  ///Step2:electrum client
+/* const BlockchainConfig.electrum(
+              config: ElectrumConfig(
+                  stopGap: 10,
+                  timeout: 5,
+                  retry: 5,
+                  url: "ssl://electrum.blockstream.info:60002",
+                  validateDomain: false)) */
+  ///Step2:Client
   blockchainInit() async {
     String esploraUrl =
         Platform.isAndroid ? 'http://10.0.2.2:30000' : 'http://127.0.0.1:30000';
@@ -154,13 +162,6 @@ class _HomeState extends State<Home> {
       blockchain = await Blockchain.create(
           config: BlockchainConfig.esplora(
               config: EsploraConfig(baseUrl: esploraUrl, stopGap: 10)));
-      /* const BlockchainConfig.electrum(
-              config: ElectrumConfig(
-                  stopGap: 10,
-                  timeout: 5,
-                  retry: 5,
-                  url: "ssl://electrum.blockstream.info:60002",
-                  validateDomain: false)) */
     } on Exception catch (e) {
       setState(() {
         displayText = "Error: ${e.toString()}";
@@ -168,17 +169,14 @@ class _HomeState extends State<Home> {
     }
   }
 
-  Future<void> syncWallet(wallet) async {
+  Future<void> syncWallet() async {
     wallet.sync(blockchain: blockchain);
   }
 
   Future<void> changePayjoin(bool value) async {
-    final uri = payjoinManager.buildPjUri(
-        10000000, "https://testnet.demo.btcpayserver.org/BTC/pj");
-
     setState(() {
       isPayjoinEnabled = value;
-      displayText = uri.toString();
+      //   displayText = uri.toString();
     });
   }
 
@@ -211,7 +209,7 @@ class _HomeState extends State<Home> {
               children: [
                 /* Balance */
                 BalanceContainer(
-                  text: "${senderBalance ?? "0"} Sats",
+                  text: "${balance ?? "0"} Sats",
                 ),
                 /* Result */
                 ResponseContainer(
@@ -239,30 +237,25 @@ class _HomeState extends State<Home> {
                       SubmitButton(
                         text: "Create Wallet",
                         callback: () async {
-                          await createOrRestoreWallet(
-                              mnemonic.text,
-                              Network.testnet,
-                              "password",
-                              "m/84'/1'/0'",
-                              senderWallet,
-                              senderAddress);
+                          await createOrRestoreWallet(mnemonic.text,
+                              Network.testnet, "password", "m/84'/1'/0'");
                         },
                       ),
                       SubmitButton(
                         text: "Sync Wallet",
                         callback: () async {
-                          await syncWallet(senderWallet);
+                          await syncWallet();
                         },
                       ),
                       SubmitButton(
                         callback: () async {
-                          await getBalance(senderWallet, senderBalance);
+                          await getBalance();
                         },
                         text: "Get Balance",
                       ),
                       SubmitButton(
                           callback: () async {
-                            await getNewAddress(senderWallet, senderAddress);
+                            await getNewAddress();
                           },
                           text: "Get Address"),
                     ])),
@@ -285,7 +278,7 @@ class _HomeState extends State<Home> {
                               isPayjoinEnabled ? "Perform Payjoin" : "Send Bit",
                           callback: () async {
                             isPayjoinEnabled
-                                ? onPerformPayjoin()
+                                ? performPayjoin()
                                 : await onSendBit(formKey);
                           },
                         )
@@ -303,10 +296,7 @@ class _HomeState extends State<Home> {
     }
   }
 
-  onPerformPayjoin() {
-    payjoinManager.performPayjoin();
-    String psbt =
-        """cHNidP8BAFUCAAAAASeaIyOl37UfxF8iD6WLD8E+HjNCeSqF1+Ns1jM7XLw5AAAAAAD/////AaBa6gsAAAAAGXapFP/pwAYQl8w7Y28ssEYPpPxCfStFiKwAAAAAAAEBIJVe6gsAAAAAF6kUY0UgD2jRieGtwN8cTRbqjxTA2+uHIgIDsTQcy6doO2r08SOM1ul+cWfVafrEfx5I1HVBhENVvUZGMEMCIAQktY7/qqaU4VWepck7v9SokGQiQFXN8HC2dxRpRC0HAh9cjrD+plFtYLisszrWTt5g6Hhb+zqpS5m9+GFR25qaAQEEIgAgdx/RitRZZm3Unz1WTj28QvTIR3TjYK2haBao7UiNVoEBBUdSIQOxNBzLp2g7avTxI4zW6X5xZ9Vp+sR/HkjUdUGEQ1W9RiED3lXR4drIBeP4pYwfv5uUwC89uq/hJ/78pJlfJvggg71SriIGA7E0HMunaDtq9PEjjNbpfnFn1Wn6xH8eSNR1""";
+  showPsbtBottomSheet(psbt) {
     return showModalBottomSheet(
       useSafeArea: true,
       context: context,
@@ -330,7 +320,6 @@ class _HomeState extends State<Home> {
           ],
         ),
       ),
-      //  constraints: const BoxConstraints.tightFor(height: 300),
     );
   }
 
@@ -426,19 +415,23 @@ class _HomeState extends State<Home> {
     );
   }
 
-  ///Step1:This func will return receiver wallet
-  Future<void> initReceiverWallet() async {
-    String receiverMnemonic =
-        await (await Mnemonic.create(WordCount.words12)).asString();
-    await createOrRestoreWallet(receiverMnemonic, Network.testnet, "password",
-        "m/84'/1'/0'", receiverWallet, receiverAddress);
-    await syncWallet(receiverWallet);
-    await getReceiverAddress();
-    await getBalance(receiverWallet, receiverBalance);
-  }
-
-  ///Step3:Get receiver address
-  getReceiverAddress() async {
-    return await getNewAddress(receiverWallet, receiverAddress);
+  Future performPayjoin() async {
+    final pjUri = await payjoinManager.buildPjUri(
+        double.parse(amountController.text),
+        recipientAddress.text,
+        "https://testnet.demo.btcpayserver.org/BTC/pj");
+    final senderPsbt = await payjoinManager.buildOriginalPsbt(wallet, pjUri);
+    showPsbtBottomSheet(senderPsbt);
+    /*   final requestContextV1 =
+        await (await (await send.RequestBuilder.fromPsbtAndUri(
+                    psbtBase64: senderPsbt.toString(), uri: pjUri))
+                .buildWithAdditionalFee(
+                    maxFeeContribution: 1000,
+                    minFeeRate: 0,
+                    clampFeeContribution: false))
+            .extractV1(); */
+    //  final request = requestContextV1.request.$1;
+    // final response = await payjoinManager.handlePjRequest(request, headers, receiverWallet)
+    //  final checkedPayjoinProposal = await requestContextV1.contextV1.processResponse(response: response);
   }
 }
