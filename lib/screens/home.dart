@@ -420,7 +420,8 @@ class _HomeState extends State<Home> {
         double.parse(amountController.text),
         recipientAddress.text,
         "https://testnet.demo.btcpayserver.org/BTC/pj");
-    final senderPsbt = await payjoinManager.buildOriginalPsbt(wallet, pjUri);
+    final senderPsbt = await payjoinManager.buildOriginalPsbt(
+        wallet, pjUri, feeRange.feeValue);
     showPsbtBottomSheet(senderPsbt);
     /*   final requestContextV1 =
         await (await (await send.RequestBuilder.fromPsbtAndUri(

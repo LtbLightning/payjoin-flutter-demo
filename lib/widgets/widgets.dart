@@ -157,7 +157,19 @@ class SelectFeeRange extends StatelessWidget {
   }
 }
 
-enum FeeRangeEnum { high, medium, low }
+enum FeeRangeEnum {
+  high('High', 2000),
+  medium('Medium', 1000),
+  low('Low', 500);
+
+  final String name;
+  final double feeValue;
+
+  const FeeRangeEnum(this.name, this.feeValue);
+
+  @override
+  String toString() => '$feeValue sats';
+}
 
 class FeesRangeOptions extends StatefulWidget {
   const FeesRangeOptions({super.key});
@@ -174,30 +186,30 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
     return Column(
       children: <Widget>[
         RadioListTile<FeeRangeEnum>(
-          title: const ListTile(
-            title: Text('High'),
-            subtitle: Text('10 - 30 minutes'),
-            trailing: Text('2000 sats'),
+          title: ListTile(
+            title: Text(FeeRangeEnum.high.name),
+            subtitle: const Text('10 - 30 minutes'),
+            trailing: Text(FeeRangeEnum.high.toString()),
           ),
           value: FeeRangeEnum.high,
           groupValue: _range,
           onChanged: onChangeFeeRange,
         ),
         RadioListTile<FeeRangeEnum>(
-          title: const ListTile(
-            title: Text('Medium'),
-            subtitle: Text('30 - 60 minutes'),
-            trailing: Text('1000 sats'),
+          title: ListTile(
+            title: Text(FeeRangeEnum.medium.name),
+            subtitle: const Text('30 - 60 minutes'),
+            trailing: Text(FeeRangeEnum.medium.toString()),
           ),
           value: FeeRangeEnum.medium,
           groupValue: _range,
           onChanged: onChangeFeeRange,
         ),
         RadioListTile<FeeRangeEnum>(
-          title: const ListTile(
-            title: Text('Low'),
-            subtitle: Text('2 - 12 hours'),
-            trailing: Text('500 sats'),
+          title: ListTile(
+            title: Text(FeeRangeEnum.low.name),
+            subtitle: const Text('2 - 12 hours'),
+            trailing: Text(FeeRangeEnum.low.toString()),
           ),
           value: FeeRangeEnum.low,
           groupValue: _range,

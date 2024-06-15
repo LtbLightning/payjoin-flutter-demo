@@ -22,7 +22,7 @@ class PayjoinManager {
 
   //Sender psbt
   Future<PartiallySignedTransaction> buildOriginalPsbt(
-      senderWallet, String pjUri) async {
+      senderWallet, String pjUri, double feeRate) async {
     final txBuilder = TxBuilder();
     final pjUriStr = await uri.Uri.fromString(pjUri);
 
@@ -32,7 +32,7 @@ class PayjoinManager {
 
     final psbt = await txBuilder
         .addRecipient(script, await pjUriStr.amount() ?? 100)
-        .feeRate(2000.0)
+        .feeRate(feeRate)
         .finish(senderWallet);
     print("psbt : ${psbt.$1}");
     print(psbt.$2);
