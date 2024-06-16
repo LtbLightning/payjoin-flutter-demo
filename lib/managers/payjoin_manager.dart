@@ -9,11 +9,23 @@ import 'package:payjoin_flutter/common.dart';
 import 'package:payjoin_flutter/uri.dart' as uri;
 
 class PayjoinManager {
-  Future<uri.Uri> buildPjUri(double amount, String address, String pj) async {
+  static const pjUrl = "https://localhost:8088";
+  Future<uri.Uri> buildPjUri(double amount, String address,
+      {String? pj}) async {
     try {
-      final pjUri = "bitcoin:$address?amount=${amount / 100000000.0}&pj=$pj";
+      final pjUri =
+          "bitcoin:$address?amount=${amount / 100000000.0}&pj=${pj ?? pjUrl}";
+      print("pjUri : $pjUri");
       return await uri.Uri.fromString(pjUri);
-      //   return pjUri;
+    } catch (e) {
+      debugPrint(e.toString());
+      rethrow;
+    }
+  }
+
+  Future<uri.Uri> stringToUri(String pj) async {
+    try {
+      return await uri.Uri.fromString(pj);
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
@@ -24,14 +36,12 @@ class PayjoinManager {
   Future<PartiallySignedTransaction> buildOriginalPsbt(
       senderWallet, uri.Uri pjUri, double feeRate) async {
     final txBuilder = TxBuilder();
-    // final pjUriStr = await uri.Uri.fromString(pjUri);
-
     final address = await Address.fromString(
-        s: await pjUri.address(), network: Network.testnet);
+        s: await pjUri.address(), network: Network.regtest);
     final script = await address.scriptPubkey();
 
     final psbt = await txBuilder
-        .addRecipient(script, await pjUri.amount() ?? 100)
+        .addRecipient(script, (await pjUri.amount() ?? 100).toInt())
         .feeRate(feeRate)
         .finish(senderWallet);
     return psbt.$1;
@@ -83,16 +93,22 @@ class PayjoinManager {
       senderAddress}) async {
     try {
       final _ = await proposal.extractTxToScheduleBroadcast();
+
       final ownedInput = await proposal.checkBroadcastSuitability(
           canBroadcast: (i) => canBroadcast(i, receiverWallet));
+
       final outputsOwned = await ownedInput.checkInputsNotOwned(
           isOwned: (i) => isOwned(i, receiverWallet));
+
       final seenInput = await outputsOwned.checkNoMixedInputScripts();
+
       final outputsUnknown = (await seenInput.checkNoInputsSeenBefore(
           isKnown: (i) => isKnown(i, receiverWallet))); //?ptr
       final payjoin = await outputsUnknown.identifyReceiverOutputs(
         isReceiverOutput: (i) => isReceiverOutput(i, receiverWallet),
       );
+      print("hey 2$payjoin");
+
       final availableInputs = await receiverWallet.listUnspent();
       Map<int, types.OutPoint> candidateInputs = {
         for (var input in availableInputs)
@@ -110,6 +126,7 @@ class PayjoinManager {
         value: selectedUtxo.txout.value,
         scriptPubkey: selectedUtxo.txout.scriptPubkey.bytes,
       );
+      print("hey 1$payjoin");
 
       var outpointToContribute = types.OutPoint(
         txid: selectedUtxo.outpoint.txid.toString(),
@@ -118,7 +135,7 @@ class PayjoinManager {
       payjoin.contributeWitnessInput(
           txo: txoToContribute, outpoint: outpointToContribute);
       payjoin.substituteOutputAddress(address: senderAddress!);
-
+      print("hey $payjoin");
       final payjoinProposal = await payjoin.finalizeProposal(
           processPsbt: (i) => processPsbt(i, receiverWallet));
       return payjoinProposal;
@@ -134,5 +151,12 @@ class PayjoinManager {
     senderWallet.sign(psbt: psbt);
     var transaction = psbt.extractTx();
     return transaction;
+  }
+
+  Future<String> psbtToBase64String(PartiallySignedTransaction psbt) async {
+    String bytes = await psbt.serialize();
+    return bytes;
+    // String base64String = base64Encode(bytes);
+    // return base64String;
   }
 }
