@@ -1,6 +1,7 @@
 import 'package:bdk_flutter/bdk_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../widgets/widgets.dart';
 
@@ -20,27 +21,30 @@ class _HomeState extends State<Home> {
   TextEditingController mnemonic = TextEditingController();
   TextEditingController recipientAddress = TextEditingController();
   TextEditingController amount = TextEditingController();
-
+  bool isPayjoinEnabled = false;
+  bool isReceiver = false;
+  FeeRangeEnum feeRange = FeeRangeEnum.high;
   generateMnemonicHandler() async {
-    var res = await Mnemonic.create(WordCount.Words12);
+    var res = await (await Mnemonic.create(WordCount.words12)).asString();
+
     setState(() {
-      mnemonic.text = res.asString();
-      displayText = res.asString();
+      mnemonic.text = res;
+      displayText = res;
     });
   }
 
   Future<List<Descriptor>> getDescriptors(String mnemonicStr) async {
     final descriptors = <Descriptor>[];
     try {
-      for (var e in [KeychainKind.External, KeychainKind.Internal]) {
+      for (var e in [KeychainKind.externalChain, KeychainKind.internalChain]) {
         final mnemonic = await Mnemonic.fromString(mnemonicStr);
         final descriptorSecretKey = await DescriptorSecretKey.create(
-          network: Network.Testnet,
+          network: Network.testnet,
           mnemonic: mnemonic,
         );
         final descriptor = await Descriptor.newBip86(
             secretKey: descriptorSecretKey,
-            network: Network.Testnet,
+            network: Network.testnet,
             keychain: e);
         descriptors.add(descriptor);
       }
@@ -67,8 +71,8 @@ class _HomeState extends State<Home> {
         wallet = res;
       });
       var addressInfo = await getNewAddress();
+      address = await addressInfo.address.asString();
       setState(() {
-        address = addressInfo.address;
         displayText = "Wallet Created: $address";
       });
     } on Exception catch (e) {
@@ -91,13 +95,14 @@ class _HomeState extends State<Home> {
   }
 
   Future<AddressInfo> getNewAddress() async {
-    final res = await wallet.getAddress(addressIndex: const AddressIndex());
+    final res =
+        await wallet.getAddress(addressIndex: const AddressIndex.increase());
     if (kDebugMode) {
       print(res.address);
     }
+    address = await res.address.asString();
     setState(() {
-      displayText = res.address;
-      address = res.address;
+      displayText = address;
     });
     return res;
   }
@@ -105,15 +110,24 @@ class _HomeState extends State<Home> {
   sendTx(String addressStr, int amount) async {
     try {
       final txBuilder = TxBuilder();
-      final address = await Address.create(address: addressStr);
-      final script = await address.scriptPubKey();
-      final txBuilderResult = await txBuilder
+      final address =
+          await Address.fromString(s: addressStr, network: Network.testnet);
+      final script = await address.scriptPubkey();
+
+      final psbt = await txBuilder
           .addRecipient(script, amount)
           .feeRate(1.0)
           .finish(wallet);
-      final sbt = await wallet.sign(psbt: txBuilderResult.psbt);
-      final tx = await sbt.extractTx();
-      await blockchain.broadcast(tx);
+
+      final isFinalized = await wallet.sign(psbt: psbt.$1);
+      if (isFinalized) {
+        final tx = await psbt.$1.extractTx();
+        final res = await blockchain.broadcast(transaction: tx);
+        debugPrint(res);
+      } else {
+        debugPrint("psbt not finalized!");
+      }
+
       setState(() {
         displayText = "Successfully broadcast $amount Sats to $addressStr";
       });
@@ -142,7 +156,42 @@ class _HomeState extends State<Home> {
   }
 
   syncWallet() async {
-    wallet.sync(blockchain);
+    wallet.sync(blockchain: blockchain);
+  }
+
+  changePayjoin(bool value) async {
+    final uri =
+        buildPjUri(10000000, "https://testnet.demo.btcpayserver.org/BTC/pj");
+
+    setState(() {
+      isPayjoinEnabled = value;
+      displayText = uri.toString();
+    });
+  }
+
+  changeFrom(bool value) async {
+    setState(() {
+      isReceiver = value;
+    });
+  }
+
+  chooseFeeRange() async {
+    feeRange = await showModalBottomSheet(
+      context: context,
+      builder: (context) => const SelectFeeRange(),
+      constraints: const BoxConstraints.tightFor(height: 300),
+    );
+  }
+
+  Uri buildPjUri(double amount, String pj) {
+    try {
+      final pjUri =
+          "tb1q5tsjcyz7xmet07yxtumakt739y53hcttmntajq?amount=${amount / 100000000.0}&pj=$pj";
+      return Uri.dataFromString(pjUri);
+    } catch (e) {
+      debugPrint(e.toString());
+      rethrow;
+    }
   }
 
   @override
@@ -189,7 +238,7 @@ class _HomeState extends State<Home> {
                         text: "Create Wallet",
                         callback: () async {
                           await createOrRestoreWallet(mnemonic.text,
-                              Network.Testnet, "password", "m/84'/1'/0'");
+                              Network.testnet, "password", "m/84'/1'/0'");
                         },
                       ),
                       SubmitButton(
@@ -218,44 +267,19 @@ class _HomeState extends State<Home> {
                       mainAxisAlignment: MainAxisAlignment.start,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        TextFieldContainer(
-                          child: TextFormField(
-                            controller: recipientAddress,
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your address';
-                              }
-                              return null;
-                            },
-                            style: Theme.of(context).textTheme.bodyLarge,
-                            decoration: const InputDecoration(
-                              hintText: "Enter Address",
-                            ),
-                          ),
-                        ),
-                        TextFieldContainer(
-                          child: TextFormField(
-                            controller: amount,
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter the amount';
-                              }
-                              return null;
-                            },
-                            keyboardType: TextInputType.number,
-                            style: Theme.of(context).textTheme.bodyLarge,
-                            decoration: const InputDecoration(
-                              hintText: "Enter Amount",
-                            ),
-                          ),
-                        ),
+                        buildPayjoinSwitch(),
+                        if (isPayjoinEnabled) ...[
+                          buildPayjoinFields(),
+                        ] else ...[
+                          buildFields()
+                        ],
                         SubmitButton(
-                          text: "Send Bit",
+                          text:
+                              isPayjoinEnabled ? "Perform Payjoin" : "Send Bit",
                           callback: () async {
-                            if (formKey.currentState!.validate()) {
-                              await sendTx(recipientAddress.text,
-                                  int.parse(amount.text));
-                            }
+                            isPayjoinEnabled
+                                ? onPerformPayjoin()
+                                : await onSendBit(formKey);
                           },
                         )
                       ]),
@@ -264,5 +288,133 @@ class _HomeState extends State<Home> {
             ),
           ),
         ));
+  }
+
+  onSendBit(formKey) async {
+    if (formKey.currentState!.validate()) {
+      await sendTx(recipientAddress.text, int.parse(amount.text));
+    }
+  }
+
+  onPerformPayjoin() {
+    String psbt =
+        """cHNidP8BAFUCAAAAASeaIyOl37UfxF8iD6WLD8E+HjNCeSqF1+Ns1jM7XLw5AAAAAAD/////AaBa6gsAAAAAGXapFP/pwAYQl8w7Y28ssEYPpPxCfStFiKwAAAAAAAEBIJVe6gsAAAAAF6kUY0UgD2jRieGtwN8cTRbqjxTA2+uHIgIDsTQcy6doO2r08SOM1ul+cWfVafrEfx5I1HVBhENVvUZGMEMCIAQktY7/qqaU4VWepck7v9SokGQiQFXN8HC2dxRpRC0HAh9cjrD+plFtYLisszrWTt5g6Hhb+zqpS5m9+GFR25qaAQEEIgAgdx/RitRZZm3Unz1WTj28QvTIR3TjYK2haBao7UiNVoEBBUdSIQOxNBzLp2g7avTxI4zW6X5xZ9Vp+sR/HkjUdUGEQ1W9RiED3lXR4drIBeP4pYwfv5uUwC89uq/hJ/78pJlfJvggg71SriIGA7E0HMunaDtq9PEjjNbpfnFn1Wn6xH8eSNR1""";
+    return showModalBottomSheet(
+      useSafeArea: true,
+      context: context,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            Expanded(child: Text(psbt)),
+            IconButton(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: psbt));
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Copied to clipboard!'),
+                  ));
+                },
+                icon: const Icon(
+                  Icons.copy,
+                  size: 36,
+                ))
+          ],
+        ),
+      ),
+      //  constraints: const BoxConstraints.tightFor(height: 300),
+    );
+  }
+
+  Widget buildFields() {
+    return Column(
+      children: [
+        TextFieldContainer(
+          child: TextFormField(
+            controller: recipientAddress,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter your address';
+              }
+              return null;
+            },
+            style: Theme.of(context).textTheme.bodyLarge,
+            decoration: const InputDecoration(
+              hintText: "Enter Address",
+            ),
+          ),
+        ),
+        TextFieldContainer(
+          child: TextFormField(
+            controller: amount,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter the amount';
+              }
+              return null;
+            },
+            keyboardType: TextInputType.number,
+            style: Theme.of(context).textTheme.bodyLarge,
+            decoration: const InputDecoration(
+              hintText: "Enter Amount",
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget buildPayjoinSwitch() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          "Payjoin",
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Switch(
+            value: isPayjoinEnabled,
+            onChanged: changePayjoin,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget buildPayjoinFields() {
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              isReceiver ? "Receiver" : "Sender",
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Switch(
+                value: isReceiver,
+                onChanged: changeFrom,
+              ),
+            ),
+          ],
+        ),
+        if (isReceiver) ...[
+          buildFields()
+        ] else ...[
+          Center(
+            child: TextButton(
+              onPressed: () => chooseFeeRange(),
+              child: const Text(
+                "Choose fee range",
+              ),
+            ),
+          ),
+        ]
+      ],
+    );
   }
 }

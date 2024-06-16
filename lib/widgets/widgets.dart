@@ -133,7 +133,84 @@ AppBar buildAppBar(BuildContext context) {
       color: Theme.of(context).secondaryHeaderColor,
       size: 40,
     ),
-    title: Text("Bdk-Flutter Tutorial",
+    title: Text("Payjoin Tutorial",
         style: Theme.of(context).textTheme.displayLarge),
   );
+}
+
+class SelectFeeRange extends StatelessWidget {
+  const SelectFeeRange({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          child: Text(
+            'Choose a Fee Range',
+          ),
+        ),
+        FeesRangeOptions(),
+      ],
+    );
+  }
+}
+
+enum FeeRangeEnum { high, medium, low }
+
+class FeesRangeOptions extends StatefulWidget {
+  const FeesRangeOptions({super.key});
+
+  @override
+  State<FeesRangeOptions> createState() => _FeesRangeOptionsState();
+}
+
+class _FeesRangeOptionsState extends State<FeesRangeOptions> {
+  FeeRangeEnum? _range = FeeRangeEnum.high;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        RadioListTile<FeeRangeEnum>(
+          title: const ListTile(
+            title: Text('High'),
+            subtitle: Text('10 - 30 minutes'),
+            trailing: Text('2000 sats'),
+          ),
+          value: FeeRangeEnum.high,
+          groupValue: _range,
+          onChanged: onChangeFeeRange,
+        ),
+        RadioListTile<FeeRangeEnum>(
+          title: const ListTile(
+            title: Text('Medium'),
+            subtitle: Text('30 - 60 minutes'),
+            trailing: Text('1000 sats'),
+          ),
+          value: FeeRangeEnum.medium,
+          groupValue: _range,
+          onChanged: onChangeFeeRange,
+        ),
+        RadioListTile<FeeRangeEnum>(
+          title: const ListTile(
+            title: Text('Low'),
+            subtitle: Text('2 - 12 hours'),
+            trailing: Text('500 sats'),
+          ),
+          value: FeeRangeEnum.low,
+          groupValue: _range,
+          onChanged: onChangeFeeRange,
+        ),
+      ],
+    );
+  }
+
+  onChangeFeeRange(FeeRangeEnum? value) {
+    setState(() {
+      _range = value;
+      Navigator.pop(context, _range);
+    });
+  }
 }
