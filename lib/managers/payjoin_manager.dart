@@ -10,13 +10,13 @@ import 'package:payjoin_flutter/uri.dart' as uri;
 
 class PayjoinManager {
   static const pjUrl = "https://localhost:8088";
-  Future<uri.Uri> buildPjUri(double amount, String address,
-      {String? pj}) async {
+
+  Future<String> buildPjStr(double amount, String address, {String? pj}) async {
     try {
       final pjUri =
           "bitcoin:$address?amount=${amount / 100000000.0}&pj=${pj ?? pjUrl}";
-      print("pjUri : $pjUri");
-      return await uri.Uri.fromString(pjUri);
+      debugPrint("pjUri: : $pjUri");
+      return pjUri;
     } catch (e) {
       debugPrint(e.toString());
       rethrow;

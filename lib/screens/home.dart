@@ -22,21 +22,31 @@ class _HomeState extends State<Home> {
   late Blockchain blockchain;
   String? displayText;
   String? address;
-  String? balance;
+  String balance = "0";
   TextEditingController mnemonic = TextEditingController();
   TextEditingController recipientAddress = TextEditingController();
   TextEditingController amountController = TextEditingController();
   TextEditingController pjUriController = TextEditingController();
   TextEditingController psbtController = TextEditingController();
   TextEditingController responseController = TextEditingController();
-  bool isPayjoinEnabled = false;
+  bool _isPayjoinEnabled = false;
   bool isReceiver = false;
   FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
   dynamic pjUri;
-  dynamic senderPsbt;
   dynamic requestContextV1;
-  generateMnemonicHandler() async {
+
+  String get getSubmitButtonTitle => _isPayjoinEnabled
+      ? requestContextV1 != null
+          ? "Finalize Payjoin"
+          : isReceiver
+              ? pjUri != null
+                  ? "Handle Request"
+                  : "Build Pj Uri"
+              : "Perform Payjoin"
+      : "Send Bit";
+
+  Future<void> generateMnemonicHandler() async {
     var res = await (await Mnemonic.create(WordCount.words12)).asString();
 
     setState(() {
@@ -119,6 +129,9 @@ class _HomeState extends State<Home> {
     address = await res.address.asString();
     setState(() {
       displayText = address;
+      if (isReceiver && address != null) {
+        recipientAddress.text = address!;
+      }
     });
     return res;
   }
@@ -182,7 +195,7 @@ class _HomeState extends State<Home> {
 
   Future<void> changePayjoin(bool value) async {
     setState(() {
-      isPayjoinEnabled = value;
+      _isPayjoinEnabled = value;
       //   displayText = uri.toString();
     });
   }
@@ -210,92 +223,86 @@ class _HomeState extends State<Home> {
         /* Header */
         appBar: buildAppBar(context),
         body: SingleChildScrollView(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 30),
-            child: Column(
-              children: [
-                /* Balance */
-                BalanceContainer(
-                  text: "${balance ?? "0"} Sats",
-                ),
-                /* Result */
-                ResponseContainer(
-                  text: displayText ?? " ",
-                ),
-                StyledContainer(
-                    child: Column(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                      SubmitButton(
-                          text: "Generate Mnemonic",
-                          callback: () async {
-                            await generateMnemonicHandler();
-                          }),
-                      TextFieldContainer(
-                        child: TextFormField(
-                            controller: mnemonic,
-                            style: Theme.of(context).textTheme.bodyLarge,
-                            keyboardType: TextInputType.multiline,
-                            maxLines: 5,
-                            decoration: const InputDecoration(
-                                hintText: "Enter your mnemonic")),
-                      ),
-                      SubmitButton(
-                        text: "Create Wallet",
-                        callback: () async {
-                          await createOrRestoreWallet(mnemonic.text,
-                              Network.regtest, "password", "m/84'/1'/0'");
-                        },
-                      ),
-                      SubmitButton(
-                        text: "Sync Wallet",
-                        callback: () async {
-                          await syncWallet();
-                        },
-                      ),
-                      SubmitButton(
-                        callback: () async {
-                          await getBalance();
-                        },
-                        text: "Get Balance",
-                      ),
-                      SubmitButton(
-                          callback: () async {
-                            await getNewAddress();
-                          },
-                          text: "Get Address"),
-                    ])),
-                /* Send Transaction */
-                StyledContainer(
-                    child: Form(
-                  key: formKey,
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            children: [
+              /* Balance */
+              BalanceContainer(
+                text: "$balance Sats",
+              ),
+              /* Result */
+              ResponseContainer(
+                text: displayText ?? " ",
+              ),
+              StyledContainer(
                   child: Column(
                       mainAxisAlignment: MainAxisAlignment.start,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        buildPayjoinSwitch(),
-                        if (isPayjoinEnabled) ...[
-                          buildPayjoinFields(),
-                        ] else ...[
-                          buildFields()
-                        ],
-                        SubmitButton(
-                          text: requestContextV1 != null
-                              ? "Finalize Payjoin"
-                              : isPayjoinEnabled
-                                  ? "Perform Payjoin"
-                                  : "Send Bit",
-                          callback: () async {
-                            isPayjoinEnabled
-                                ? performPayjoin()
-                                : await onSendBit(formKey);
-                          },
-                        )
-                      ]),
-                ))
-              ],
-            ),
+                    SubmitButton(
+                        text: "Generate Mnemonic",
+                        callback: () async {
+                          await generateMnemonicHandler();
+                        }),
+                    TextFieldContainer(
+                      child: TextFormField(
+                          controller: mnemonic,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                          keyboardType: TextInputType.multiline,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                              hintText: "Enter your mnemonic")),
+                    ),
+                    SubmitButton(
+                      text: "Create Wallet",
+                      callback: () async {
+                        await createOrRestoreWallet(mnemonic.text,
+                            Network.regtest, "password", "m/84'/1'/0'");
+                      },
+                    ),
+                    SubmitButton(
+                      text: "Sync Wallet",
+                      callback: () async {
+                        await syncWallet();
+                      },
+                    ),
+                    SubmitButton(
+                      callback: () async {
+                        await getBalance();
+                      },
+                      text: "Get Balance",
+                    ),
+                    SubmitButton(
+                        callback: () async {
+                          await getNewAddress();
+                        },
+                        text: "Get Address"),
+                  ])),
+              /* Send Transaction */
+              StyledContainer(
+                  child: Form(
+                key: formKey,
+                child: Column(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      CustomSwitchTile(
+                        title: "Payjoin",
+                        value: _isPayjoinEnabled,
+                        onChanged: changePayjoin,
+                      ),
+                      _isPayjoinEnabled ? buildPayjoinFields() : buildFields(),
+                      SubmitButton(
+                        text: getSubmitButtonTitle,
+                        callback: () async {
+                          _isPayjoinEnabled
+                              ? performPayjoin(formKey)
+                              : await onSendBit(formKey);
+                        },
+                      )
+                    ]),
+              ))
+            ],
           ),
         ));
   }
@@ -306,7 +313,7 @@ class _HomeState extends State<Home> {
     }
   }
 
-  showPsbtBottomSheet(String psbt) {
+  showBottomSheet(String value) {
     return showModalBottomSheet(
       useSafeArea: true,
       context: context,
@@ -314,10 +321,10 @@ class _HomeState extends State<Home> {
         padding: const EdgeInsets.all(16.0),
         child: Row(
           children: [
-            Expanded(child: Text(psbt)),
+            Expanded(child: Text(value)),
             IconButton(
                 onPressed: () {
-                  Clipboard.setData(ClipboardData(text: psbt));
+                  Clipboard.setData(ClipboardData(text: value));
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                     content: Text('Copied to clipboard!'),
@@ -371,68 +378,73 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Widget buildPayjoinSwitch() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget buildPayjoinFields() {
+    return Column(
       children: [
-        Text(
-          "Payjoin",
-          style: Theme.of(context).textTheme.bodyLarge,
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Switch(
-            value: isPayjoinEnabled,
-            onChanged: changePayjoin,
-          ),
-        ),
+        CustomSwitchTile(
+            title: isReceiver ? "Receiver" : "Sender",
+            value: isReceiver,
+            onChanged: changeFrom),
+        if (isReceiver) ...[
+          buildReceiverFields(),
+        ] else
+          ...buildSenderFields()
       ],
     );
   }
 
-  Widget buildPayjoinFields() {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              isReceiver ? "Receiver" : "Sender",
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Switch(
-                value: isReceiver,
-                onChanged: changeFrom,
-              ),
-            ),
-          ],
+  List<Widget> buildSenderFields() {
+    if (requestContextV1 != null) {
+      return [
+        TextFieldContainer(
+          child: TextFormField(
+            controller: responseController,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter the response';
+              }
+              return null;
+            },
+            style: Theme.of(context).textTheme.bodyLarge,
+            keyboardType: TextInputType.multiline,
+            maxLines: 5,
+            decoration: const InputDecoration(hintText: "Enter response"),
+          ),
+        )
+      ];
+    } else {
+      return [
+        TextFieldContainer(
+          child: TextFormField(
+            controller: pjUriController,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter the pjUri';
+              }
+              return null;
+            },
+            style: Theme.of(context).textTheme.bodyLarge,
+            keyboardType: TextInputType.multiline,
+            maxLines: 5,
+            decoration: const InputDecoration(hintText: "Enter pjUri"),
+          ),
         ),
-        if (!isReceiver) ...[
-          if (requestContextV1 != null)
-            TextFieldContainer(
-              child: TextFormField(
-                controller: responseController,
-                style: Theme.of(context).textTheme.bodyLarge,
-                keyboardType: TextInputType.multiline,
-                maxLines: 5,
-                decoration: const InputDecoration(hintText: "Enter response"),
-              ),
-            )
-          else ...[
-            buildFields(),
-            Center(
-              child: TextButton(
-                onPressed: () => chooseFeeRange(),
-                child: const Text(
-                  "Choose fee range",
-                ),
-              ),
+        Center(
+          child: TextButton(
+            onPressed: () => chooseFeeRange(),
+            child: const Text(
+              "Choose fee range",
             ),
-          ]
-        ] else ...[
-          TextFieldContainer(
+          ),
+        ),
+      ];
+    }
+  }
+
+  Widget buildReceiverFields() {
+    return pjUri == null
+        ? buildFields()
+        : TextFieldContainer(
             child: TextFormField(
               controller: psbtController,
               style: Theme.of(context).textTheme.bodyLarge,
@@ -440,30 +452,44 @@ class _HomeState extends State<Home> {
               maxLines: 5,
               decoration: const InputDecoration(hintText: "Enter psbt"),
             ),
-          ),
-          TextFieldContainer(
-            child: TextFormField(
-              controller: pjUriController,
-              style: Theme.of(context).textTheme.bodyLarge,
-              keyboardType: TextInputType.multiline,
-              maxLines: 5,
-              decoration: const InputDecoration(hintText: "Enter pjUri"),
-            ),
-          ),
-        ]
-      ],
-    );
+          );
   }
 
-  Future performPayjoin() async {
-    if (!isReceiver && requestContextV1 == null) {
-      await performSender();
+  Future performPayjoin(formKey) async {
+    if (formKey.currentState!.validate()) {
+      if (isReceiver) {
+        await performReceiver();
+      } else {
+        await performSender();
+      }
     }
-    if (isReceiver) {
-      await performReceiver();
-    }
-    //Sender
-    if (responseController.text.isNotEmpty) {
+  }
+
+  //Sender
+  Future performSender() async {
+    //Sends request
+    if (requestContextV1 == null) {
+      String senderPsbt = await payjoinManager.psbtToBase64String(
+          await payjoinManager.buildOriginalPsbt(
+              wallet,
+              await payjoinManager.stringToUri(pjUriController.text),
+              feeRange?.feeValue ?? FeeRangeEnum.high.feeValue));
+      showBottomSheet(senderPsbt);
+      requestContextV1 = (await (await send.RequestBuilder.fromPsbtAndUri(
+                  psbtBase64: senderPsbt,
+                  uri: await payjoinManager.stringToUri(pjUriController.text)))
+              .buildWithAdditionalFee(
+                  maxFeeContribution: 1000,
+                  minFeeRate: 0,
+                  clampFeeContribution: false))
+          .extractContextV1()
+          .then((value) {
+        setState(() {
+          requestContextV1 = value;
+        });
+      });
+    } // Finalize payjoin
+    else {
       String response = jsonDecode(responseController.text);
       final checkedPayjoinProposal = await requestContextV1.$2
           .processResponse(response: base64Decode(response));
@@ -473,47 +499,44 @@ class _HomeState extends State<Home> {
     }
   }
 
-  //Sender
-  Future performSender() async {
-    pjUri = await payjoinManager.buildPjUri(
+  //Receiver
+  Future performReceiver() async {
+    if (pjUri == null) {
+      buildReceiverPjUri();
+    } else {
+      requestContextV1 = await (await (await send.RequestBuilder.fromPsbtAndUri(
+                  psbtBase64: psbtController.text, uri: pjUri))
+              .buildWithAdditionalFee(
+                  maxFeeContribution: 1000,
+                  minFeeRate: 0,
+                  clampFeeContribution: false))
+          .extractContextV1();
+      final request = requestContextV1.$1;
+      final headers = Headers(map: {
+        'content-type': 'text/plain',
+        'content-length': request.body.length.toString(),
+      });
+      String? response =
+          await payjoinManager.handlePjRequest(request, headers, wallet);
+      if (response == null) {
+        return throw Exception("Response is null");
+      }
+
+      var responseBodyJson = jsonEncode(response);
+      showBottomSheet(responseBodyJson);
+    }
+  }
+
+  Future<void> buildReceiverPjUri() async {
+    String pjStr = await payjoinManager.buildPjStr(
       double.parse(amountController.text),
       recipientAddress.text,
     );
-    senderPsbt = await payjoinManager.psbtToBase64String(
-        await payjoinManager.buildOriginalPsbt(
-            wallet, pjUri, feeRange?.feeValue ?? FeeRangeEnum.high.feeValue));
-    showPsbtBottomSheet(senderPsbt);
-    requestContextV1 = await (await (await send.RequestBuilder.fromPsbtAndUri(
-                psbtBase64: senderPsbt, uri: pjUri))
-            .buildWithAdditionalFee(
-                maxFeeContribution: 1000,
-                minFeeRate: 0,
-                clampFeeContribution: false))
-        .extractContextV1();
-  }
-
-  Future performReceiver() async {
-    requestContextV1 = await (await (await send.RequestBuilder.fromPsbtAndUri(
-                psbtBase64: psbtController.text,
-                uri: await payjoinManager.stringToUri(pjUriController.text)))
-            .buildWithAdditionalFee(
-                maxFeeContribution: 1000,
-                minFeeRate: 0,
-                clampFeeContribution: false))
-        .extractContextV1();
-    final request = requestContextV1.$1;
-    final headers = Headers(map: {
-      'content-type': 'text/plain',
-      'content-length': request.body.length.toString(),
+    payjoinManager.stringToUri(pjStr).then((value) {
+      setState(() {
+        displayText = pjStr;
+        pjUri = value;
+      });
     });
-    String? response =
-        await payjoinManager.handlePjRequest(request, headers, wallet);
-    if (response == null) {
-      return throw Exception("Response is null");
-    }
-
-    var responseBodyJson = requestContextV1.$1.toJson();
-    showPsbtBottomSheet(responseBodyJson);
   }
 }
-//
