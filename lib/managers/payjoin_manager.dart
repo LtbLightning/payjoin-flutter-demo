@@ -9,11 +9,11 @@ import 'package:payjoin_flutter/common.dart';
 import 'package:payjoin_flutter/uri.dart' as uri;
 
 class PayjoinManager {
-  Future<String> buildPjUri(double amount, String address, String pj) async {
+  Future<uri.Uri> buildPjUri(double amount, String address, String pj) async {
     try {
       final pjUri = "bitcoin:$address?amount=${amount / 100000000.0}&pj=$pj";
-    //  await uri.Uri.fromString(pjUri);
-      return pjUri;
+      return await uri.Uri.fromString(pjUri);
+      //   return pjUri;
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
@@ -22,20 +22,18 @@ class PayjoinManager {
 
   //Sender psbt
   Future<PartiallySignedTransaction> buildOriginalPsbt(
-      senderWallet, String pjUri, double feeRate) async {
+      senderWallet, uri.Uri pjUri, double feeRate) async {
     final txBuilder = TxBuilder();
-    final pjUriStr = await uri.Uri.fromString(pjUri);
+    // final pjUriStr = await uri.Uri.fromString(pjUri);
 
     final address = await Address.fromString(
-        s: await pjUriStr.address(), network: Network.testnet);
+        s: await pjUri.address(), network: Network.testnet);
     final script = await address.scriptPubkey();
 
     final psbt = await txBuilder
-        .addRecipient(script, await pjUriStr.amount() ?? 100)
+        .addRecipient(script, await pjUri.amount() ?? 100)
         .feeRate(feeRate)
         .finish(senderWallet);
-    print("psbt : ${psbt.$1}");
-    print(psbt.$2);
     return psbt.$1;
   }
 
@@ -128,5 +126,13 @@ class PayjoinManager {
       debugPrint(e.toString());
     }
     return null;
+  }
+
+  Future<Transaction> extractPjTx(
+      Wallet senderWallet, String psbtString) async {
+    final psbt = await PartiallySignedTransaction.fromString(psbtString);
+    senderWallet.sign(psbt: psbt);
+    var transaction = psbt.extractTx();
+    return transaction;
   }
 }

@@ -139,19 +139,19 @@ AppBar buildAppBar(BuildContext context) {
 }
 
 class SelectFeeRange extends StatelessWidget {
-  const SelectFeeRange({super.key});
-
+  const SelectFeeRange({super.key,this.feeRange});
+  final FeeRangeEnum? feeRange;
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return  Column(
       children: [
-        Padding(
+        const Padding(
           padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Text(
             'Choose a Fee Range',
           ),
         ),
-        FeesRangeOptions(),
+        FeesRangeOptions(feeRange: feeRange,),
       ],
     );
   }
@@ -172,14 +172,14 @@ enum FeeRangeEnum {
 }
 
 class FeesRangeOptions extends StatefulWidget {
-  const FeesRangeOptions({super.key});
-
+   FeesRangeOptions({super.key, this.feeRange = FeeRangeEnum.high});
+  FeeRangeEnum? feeRange ;
   @override
   State<FeesRangeOptions> createState() => _FeesRangeOptionsState();
 }
 
 class _FeesRangeOptionsState extends State<FeesRangeOptions> {
-  FeeRangeEnum? _range = FeeRangeEnum.high;
+ 
 
   @override
   Widget build(BuildContext context) {
@@ -192,7 +192,7 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
             trailing: Text(FeeRangeEnum.high.toString()),
           ),
           value: FeeRangeEnum.high,
-          groupValue: _range,
+          groupValue: widget.feeRange,
           onChanged: onChangeFeeRange,
         ),
         RadioListTile<FeeRangeEnum>(
@@ -202,7 +202,7 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
             trailing: Text(FeeRangeEnum.medium.toString()),
           ),
           value: FeeRangeEnum.medium,
-          groupValue: _range,
+          groupValue: widget.feeRange,
           onChanged: onChangeFeeRange,
         ),
         RadioListTile<FeeRangeEnum>(
@@ -212,7 +212,7 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
             trailing: Text(FeeRangeEnum.low.toString()),
           ),
           value: FeeRangeEnum.low,
-          groupValue: _range,
+          groupValue: widget.feeRange,
           onChanged: onChangeFeeRange,
         ),
       ],
@@ -221,8 +221,8 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
 
   onChangeFeeRange(FeeRangeEnum? value) {
     setState(() {
-      _range = value;
-      Navigator.pop(context, _range);
+      widget.feeRange = value;
+      Navigator.pop(context, widget.feeRange);
     });
   }
 }

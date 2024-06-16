@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
@@ -5,8 +6,8 @@ import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/common.dart';
 import 'package:payjoin_flutter/send.dart' as send;
-
 import '../widgets/widgets.dart';
 
 class Home extends StatefulWidget {
@@ -27,8 +28,9 @@ class _HomeState extends State<Home> {
   TextEditingController amountController = TextEditingController();
   bool isPayjoinEnabled = false;
   bool isReceiver = false;
-  FeeRangeEnum feeRange = FeeRangeEnum.high;
+  FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
+
   generateMnemonicHandler() async {
     var res = await (await Mnemonic.create(WordCount.words12)).asString();
 
@@ -66,7 +68,7 @@ class _HomeState extends State<Home> {
     String mnemonic,
     Network network,
     String? password,
-    String path,
+    String path, //TODO: Derived error: Address contains key path
   ) async {
     try {
       final descriptors = await getDescriptors(mnemonic);
@@ -91,7 +93,7 @@ class _HomeState extends State<Home> {
     }
   }
 
-  getBalance() async {
+  Future<void> getBalance() async {
     final balanceObj = await wallet.getBalance();
     final res = "Total Balance: ${balanceObj.total.toString()}";
     if (kDebugMode) {
@@ -189,7 +191,7 @@ class _HomeState extends State<Home> {
   Future<void> chooseFeeRange() async {
     feeRange = await showModalBottomSheet(
       context: context,
-      builder: (context) => const SelectFeeRange(),
+      builder: (context) => SelectFeeRange(feeRange: feeRange),
       constraints: const BoxConstraints.tightFor(height: 300),
     );
   }
@@ -421,18 +423,33 @@ class _HomeState extends State<Home> {
         recipientAddress.text,
         "https://testnet.demo.btcpayserver.org/BTC/pj");
     final senderPsbt = await payjoinManager.buildOriginalPsbt(
-        wallet, pjUri, feeRange.feeValue);
+        wallet, pjUri, feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
     showPsbtBottomSheet(senderPsbt);
-    /*   final requestContextV1 =
-        await (await (await send.RequestBuilder.fromPsbtAndUri(
-                    psbtBase64: senderPsbt.toString(), uri: pjUri))
-                .buildWithAdditionalFee(
-                    maxFeeContribution: 1000,
-                    minFeeRate: 0,
-                    clampFeeContribution: false))
-            .extractV1(); */
-    //  final request = requestContextV1.request.$1;
-    // final response = await payjoinManager.handlePjRequest(request, headers, receiverWallet)
-    //  final checkedPayjoinProposal = await requestContextV1.contextV1.processResponse(response: response);
+    if (isReceiver) {
+      final requestContextV1 =
+          await (await (await send.RequestBuilder.fromPsbtAndUri(
+                      psbtBase64: senderPsbt.toString(), uri: pjUri))
+                  .buildWithAdditionalFee(
+                      maxFeeContribution: 1000,
+                      minFeeRate: 0,
+                      clampFeeContribution: false))
+              .extractContextV1();
+      final request = requestContextV1.$1;
+      final headers = Headers(map: {
+        'content-type': 'text/plain',
+        'content-length': request.body.length.toString(),
+      });
+      final response =
+          await payjoinManager.handlePjRequest(request, headers, wallet);
+      if (response == null) {
+        return throw Exception("Response is null");
+      }
+      final checkedPayjoinProposal = await requestContextV1.$2
+          .processResponse(response: base64Decode(response));
+      final transaction =
+          await payjoinManager.extractPjTx(wallet, checkedPayjoinProposal);
+      blockchain.broadcast(transaction: transaction);
+    }
   }
 }
+//
