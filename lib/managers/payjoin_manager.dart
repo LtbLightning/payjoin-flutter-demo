@@ -6,7 +6,8 @@ import 'package:payjoin_flutter/receive/v1.dart' as v1;
 // ignore: implementation_imports
 import 'package:payjoin_flutter/src/generated/utils/types.dart' as types;
 import 'package:payjoin_flutter/common.dart';
-import 'package:payjoin_flutter/uri.dart' as uri;
+import 'package:payjoin_flutter/uri.dart' as pj_uri;
+import 'package:payjoin_flutter/send.dart' as send;
 
 class PayjoinManager {
   static const pjUrl = "https://localhost:8088";
@@ -23,9 +24,9 @@ class PayjoinManager {
     }
   }
 
-  Future<uri.Uri> stringToUri(String pj) async {
+  Future<pj_uri.Uri> stringToUri(String pj) async {
     try {
-      return await uri.Uri.fromString(pj);
+      return await pj_uri.Uri.fromString(pj);
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
@@ -34,7 +35,7 @@ class PayjoinManager {
 
   //Sender psbt
   Future<PartiallySignedTransaction> buildOriginalPsbt(
-      senderWallet, uri.Uri pjUri, double feeRate) async {
+      senderWallet, pj_uri.Uri pjUri, double feeRate) async {
     final txBuilder = TxBuilder();
     final address = await Address.fromString(
         s: await pjUri.address(), network: Network.regtest);
@@ -47,8 +48,22 @@ class PayjoinManager {
     return psbt.$1;
   }
 
-  Future<String?> handlePjRequest(
-      Request req, Headers headers, receiverWallet) async {
+  Future<(String?, send.ContextV1)> handlePjRequest(
+      String psbtBase64, String uriStr, receiverWallet) async {
+    final uri = await pj_uri.Uri.fromString(uriStr);
+
+    final (req, cxt) = await (await (await send.RequestBuilder.fromPsbtAndUri(
+                psbtBase64: psbtBase64, uri: uri))
+            .buildWithAdditionalFee(
+                maxFeeContribution: 1000,
+                minFeeRate: 0,
+                clampFeeContribution: false))
+        .extractContextV1();
+
+    final headers = Headers(map: {
+      'content-type': 'text/plain',
+      'content-length': req.body.length.toString(),
+    });
     final uncheckedProposal = await v1.UncheckedProposal.fromRequest(
         body: req.body.toList(),
         query: (await req.url.query())!,
@@ -57,18 +72,10 @@ class PayjoinManager {
     final proposal = await handleProposal(
         proposal: uncheckedProposal, receiverWallet: receiverWallet);
 
-    return await proposal?.psbt();
+    return (await proposal?.psbt(), cxt);
   }
 
   Future<bool> isReceiverOutput(Uint8List bytes, Wallet wallet) async {
-    return true;
-  }
-
-  Future<bool> isKnown(types.OutPoint outputScript, Wallet wallet) async {
-    return false;
-  }
-
-  Future<bool> canBroadcast(Uint8List bytes, Wallet wallet) async {
     return true;
   }
 
@@ -102,17 +109,18 @@ class PayjoinManager {
   }) async {
     try {
       final _ = await proposal.extractTxToScheduleBroadcast();
-      final ownedInput = await proposal.checkBroadcastSuitability(
-          canBroadcast: (i) => canBroadcast(i, receiverWallet));
-
-      final outputsOwned = await ownedInput.checkInputsNotOwned(
+      final ownedInputs =
+          await proposal.checkBroadcastSuitability(canBroadcast: (e) async {
+        return true;
+      });
+      final mixedInputScripts = await ownedInputs.checkInputsNotOwned(
           isOwned: (i) => isOwned(i, receiverWallet));
-
-      final seenInput = await outputsOwned.checkNoMixedInputScripts();
-
-      final outputsUnknown = (await seenInput.checkNoInputsSeenBefore(
-          isKnown: (i) => isKnown(i, receiverWallet))); //?ptr
-      final payjoin = await outputsUnknown.identifyReceiverOutputs(
+      final seenInputs = await mixedInputScripts.checkNoMixedInputScripts();
+      final payjoin =
+          await (await seenInputs.checkNoInputsSeenBefore(isKnown: (e) async {
+        return false;
+      }))
+              .identifyReceiverOutputs(
         isReceiverOutput: (i) => isReceiverOutput(i, receiverWallet),
       );
 
