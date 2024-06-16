@@ -191,12 +191,12 @@ class _HomeState extends State<Home> {
 
   Future<void> syncWallet() async {
     wallet.sync(blockchain: blockchain);
+    await getBalance();
   }
 
   Future<void> changePayjoin(bool value) async {
     setState(() {
       _isPayjoinEnabled = value;
-      //   displayText = uri.toString();
     });
   }
 
@@ -265,12 +265,6 @@ class _HomeState extends State<Home> {
                       callback: () async {
                         await syncWallet();
                       },
-                    ),
-                    SubmitButton(
-                      callback: () async {
-                        await getBalance();
-                      },
-                      text: "Get Balance",
                     ),
                     SubmitButton(
                         callback: () async {
