@@ -38,7 +38,7 @@ class PayjoinManager {
       senderWallet, pj_uri.Uri pjUri, double feeRate) async {
     final txBuilder = TxBuilder();
     final address = await Address.fromString(
-        s: await pjUri.address(), network: Network.regtest);
+        s: await pjUri.address(), network: Network.signet);
     final script = await address.scriptPubkey();
     int amount = (((await pjUri.amount()) ?? 0) * 100000000).toInt();
     final psbt = await txBuilder

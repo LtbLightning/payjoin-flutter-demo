@@ -31,14 +31,14 @@ class _HomeState extends State<Home> {
   bool isReceiver = false;
   FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
-  dynamic pjUri;
+  String pjUri = '';
   bool isRequestSent = false;
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
       ? isRequestSent
           ? "Finalize Payjoin"
           : isReceiver
-              ? pjUri != null
+              ? pjUri.isNotEmpty
                   ? "Handle Request"
                   : "Build Pj Uri"
               : "Perform Payjoin"
@@ -59,12 +59,12 @@ class _HomeState extends State<Home> {
       for (var e in [KeychainKind.externalChain, KeychainKind.internalChain]) {
         final mnemonic = await Mnemonic.fromString(mnemonicStr);
         final descriptorSecretKey = await DescriptorSecretKey.create(
-          network: Network.regtest,
+          network: Network.signet,
           mnemonic: mnemonic,
         );
         final descriptor = await Descriptor.newBip86(
             secretKey: descriptorSecretKey,
-            network: Network.regtest,
+            network: Network.signet,
             keychain: e);
         descriptors.add(descriptor);
       }
@@ -138,7 +138,7 @@ class _HomeState extends State<Home> {
     try {
       final txBuilder = TxBuilder();
       final address =
-          await Address.fromString(s: addressStr, network: Network.regtest);
+          await Address.fromString(s: addressStr, network: Network.signet);
       final script = await address.scriptPubkey();
 
       final psbt = await txBuilder
@@ -174,8 +174,7 @@ class _HomeState extends State<Home> {
                   validateDomain: false)) */
   ///Step2:Client
   blockchainInit() async {
-    String esploraUrl =
-        Platform.isAndroid ? 'http://10.0.2.2:30000' : 'http://127.0.0.1:30000';
+    String esploraUrl = 'https://mutinynet.ltbl.io/api';
     try {
       blockchain = await Blockchain.create(
           config: BlockchainConfig.esplora(
@@ -255,7 +254,7 @@ class _HomeState extends State<Home> {
                       text: "Create Wallet",
                       callback: () async {
                         await createOrRestoreWallet(mnemonic.text,
-                            Network.regtest, "password", "m/84'/1'/0'");
+                            Network.signet, "password", "m/84'/1'/0'");
                       },
                     ),
                     SubmitButton(
@@ -434,7 +433,7 @@ class _HomeState extends State<Home> {
   }
 
   Widget buildReceiverFields() {
-    return pjUri == null
+    return pjUri.isEmpty
         ? buildFields()
         : TextFieldContainer(
             child: TextFormField(
@@ -481,7 +480,7 @@ class _HomeState extends State<Home> {
 
   //Receiver
   Future performReceiver() async {
-    if (pjUri == null) {
+    if (pjUri.isEmpty) {
       buildReceiverPjUri();
     } else {
       final (String? receiverPsbt, contextV1) = await payjoinManager
@@ -500,11 +499,10 @@ class _HomeState extends State<Home> {
       double.parse(amountController.text),
       recipientAddress.text,
     );
-    payjoinManager.stringToUri(pjStr).then((value) {
-      setState(() {
-        displayText = pjStr;
-        pjUri = value;
-      });
+
+    setState(() {
+      displayText = pjStr;
+      pjUri = pjStr;
     });
   }
 }
