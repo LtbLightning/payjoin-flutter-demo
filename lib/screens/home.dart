@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
-import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import '../managers/bdk_manager.dart';
+import '../managers/payjoin_manager.dart';
 import '../widgets/widgets.dart';
 
 class Home extends StatefulWidget {
@@ -15,6 +17,7 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
+//cart super leaf clinic pistol plug replace close super tooth wealth usage
 class _HomeState extends State<Home> {
   late Wallet wallet;
   late Blockchain blockchain;
@@ -30,7 +33,8 @@ class _HomeState extends State<Home> {
   bool _isPayjoinEnabled = false;
   bool isReceiver = false;
   FeeRangeEnum? feeRange;
-  PayjoinManager payjoinManager = PayjoinManager();
+  PayJoinManager payjoinManager = PayJoinManager();
+  BdkManager bdkManager = BdkManager();
   dynamic pjUri;
   bool isRequestSent = false;
 
@@ -46,64 +50,48 @@ class _HomeState extends State<Home> {
 
   Future<void> generateMnemonicHandler() async {
     var res = await (await Mnemonic.create(WordCount.words12)).asString();
-
     setState(() {
       mnemonic.text = res;
       displayText = res;
     });
   }
 
-  Future<List<Descriptor>> getDescriptors(String mnemonicStr) async {
-    final descriptors = <Descriptor>[];
-    try {
-      for (var e in [KeychainKind.externalChain, KeychainKind.internalChain]) {
-        final mnemonic = await Mnemonic.fromString(mnemonicStr);
-        final descriptorSecretKey = await DescriptorSecretKey.create(
-          network: Network.regtest,
-          mnemonic: mnemonic,
-        );
-        final descriptor = await Descriptor.newBip86(
-            secretKey: descriptorSecretKey,
-            network: Network.regtest,
-            keychain: e);
-        descriptors.add(descriptor);
-      }
-      return descriptors;
-    } on Exception catch (e) {
-      setState(() {
-        displayText = "Error : ${e.toString()}";
-      });
-      rethrow;
-    }
-  }
-
   createOrRestoreWallet(
     String mnemonic,
-    Network network,
+    Network network, {
     String? password,
-    String path, //TODO: Derived error: Address contains key path
-  ) async {
+  }) async {
     try {
-      final descriptors = await getDescriptors(mnemonic);
-      await blockchainInit();
-      final res = await Wallet.create(
-          descriptor: descriptors[0],
-          changeDescriptor: descriptors[1],
-          network: network,
-          databaseConfig: const DatabaseConfig.memory());
+      wallet =
+          await bdkManager.createOrRestoreWallet(mnemonic, network, password);
+      await getNewAddress();
+      String esploraUrl = Platform.isAndroid
+          ? 'http://10.0.2.2:30000'
+          : 'http://127.0.0.1:30000';
+      blockchain = await bdkManager.blockchainInit(esploraUrl);
       setState(() {
-        wallet = res;
-      });
-      var addressInfo = await getNewAddress();
-      address = await addressInfo.address.asString();
-      setState(() {
-        displayText = "Wallet Created: $address";
+        displayText = "Wallet created successfully\n address: $address";
       });
     } on Exception catch (e) {
       setState(() {
         displayText = "Error: ${e.toString()}";
       });
     }
+  }
+
+  getNewAddress() async {
+    final res = address =
+        await (await bdkManager.getNewAddress(wallet)).address.asString();
+    if (kDebugMode) {
+      print(res);
+    }
+    setState(() {
+      displayText = address;
+      if (isReceiver && address != null) {
+        recipientAddress.text = address!;
+      }
+    });
+    return res;
   }
 
   Future<void> getBalance() async {
@@ -118,37 +106,13 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<AddressInfo> getNewAddress() async {
-    final res =
-        await wallet.getAddress(addressIndex: const AddressIndex.increase());
-    if (kDebugMode) {
-      print(res.address);
-    }
-    address = await res.address.asString();
-    setState(() {
-      displayText = address;
-      if (isReceiver && address != null) {
-        recipientAddress.text = address!;
-      }
-    });
-    return res;
-  }
-
   Future<void> sendTx(String addressStr, int amount) async {
     try {
-      final txBuilder = TxBuilder();
-      final address =
-          await Address.fromString(s: addressStr, network: Network.regtest);
-      final script = await address.scriptPubkey();
+      final psbt = await bdkManager.buildPsbt(wallet, addressStr, amount, 5);
 
-      final psbt = await txBuilder
-          .addRecipient(script, amount)
-          .feeRate(1.0)
-          .finish(wallet);
-
-      final isFinalized = await wallet.sign(psbt: psbt.$1);
-      if (isFinalized) {
-        final tx = await psbt.$1.extractTx();
+      final res = bdkManager.signPsbt(await psbt.serialize(), wallet);
+      if (res != null) {
+        final tx = await psbt.extractTx();
         final res = await blockchain.broadcast(transaction: tx);
         debugPrint(res);
       } else {
@@ -165,34 +129,12 @@ class _HomeState extends State<Home> {
     }
   }
 
-/* const BlockchainConfig.electrum(
-              config: ElectrumConfig(
-                  stopGap: 10,
-                  timeout: 5,
-                  retry: 5,
-                  url: "ssl://electrum.blockstream.info:60002",
-                  validateDomain: false)) */
-  ///Step2:Client
-  blockchainInit() async {
-    String esploraUrl =
-        Platform.isAndroid ? 'http://10.0.2.2:30000' : 'http://127.0.0.1:30000';
-    try {
-      blockchain = await Blockchain.create(
-          config: BlockchainConfig.esplora(
-              config: EsploraConfig(baseUrl: esploraUrl, stopGap: 10)));
-    } on Exception catch (e) {
-      setState(() {
-        displayText = "Error: ${e.toString()}";
-      });
-    }
-  }
-
   Future<void> syncWallet() async {
     wallet.sync(blockchain: blockchain);
     await getBalance();
   }
 
-  Future<void> changePayjoin(bool value) async {
+  Future<void> changePayJoin(bool value) async {
     setState(() {
       _isPayjoinEnabled = value;
     });
@@ -254,8 +196,8 @@ class _HomeState extends State<Home> {
                     SubmitButton(
                       text: "Create Wallet",
                       callback: () async {
-                        await createOrRestoreWallet(mnemonic.text,
-                            Network.regtest, "password", "m/84'/1'/0'");
+                        await createOrRestoreWallet(
+                            mnemonic.text, Network.regtest);
                       },
                     ),
                     SubmitButton(
@@ -281,7 +223,7 @@ class _HomeState extends State<Home> {
                       CustomSwitchTile(
                         title: "Payjoin",
                         value: _isPayjoinEnabled,
-                        onChanged: changePayjoin,
+                        onChanged: changePayJoin,
                       ),
                       _isPayjoinEnabled ? buildPayjoinFields() : buildFields(),
                       SubmitButton(
@@ -459,24 +401,36 @@ class _HomeState extends State<Home> {
 
   //Sender
   Future performSender() async {
-    if (!isRequestSent) {
-      String senderPsbt = await payjoinManager.psbtToBase64String(
-          await payjoinManager.buildOriginalPsbt(
-              wallet,
-              await payjoinManager.stringToUri(pjUriController.text),
-              feeRange?.feeValue ?? FeeRangeEnum.high.feeValue));
-      showBottomSheet(senderPsbt);
+    try {
+      if (!isRequestSent) {
+        String senderPsbt = await (await bdkManager.buildPsbt(
+                wallet,
+                await (await payjoinManager.stringToUri(pjUriController.text))
+                    .address(),
+                (((await (await payjoinManager
+                                    .stringToUri(pjUriController.text))
+                                .amount()) ??
+                            0) *
+                        100000000)
+                    .toInt(),
+                feeRange?.feeValue ?? FeeRangeEnum.high.feeValue))
+            .serialize();
+        showBottomSheet(senderPsbt);
 
-      setState(() {
-        isRequestSent = true;
-      });
-    } // Finalize payjoin
-    else {
-      String receiverPsbt = receiverPsbtController.text;
-      final transaction =
-          await payjoinManager.extractPjTx(wallet, receiverPsbt);
-      blockchain.broadcast(transaction: transaction);
-    }
+        setState(() {
+          isRequestSent = true;
+        });
+      } // Finalize payjoin
+      else {
+        String receiverPsbt = receiverPsbtController.text;
+        final transaction =
+            await bdkManager.extractTxFromPsbtString(wallet, receiverPsbt);
+        final txid = await blockchain.broadcast(transaction: transaction);
+        setState(() {
+          displayText = "PayJoin transaction successfully completed: $txid";
+        });
+      }
+    } on Exception catch (e) {}
   }
 
   //Receiver
