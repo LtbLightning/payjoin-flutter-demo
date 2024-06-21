@@ -38,8 +38,8 @@ packages:
     description:
       path: "."
       ref: bdk-payjoin-integration-fix
-      resolved-ref: ea7f666e1358bccb3fe6a99883d454bfcacf37f4
-      url: "https://github.com/LtbLightning/bdk-flutter.git"
+      resolved-ref: b71c23c33d13626f2b38b5dc3744e71c29a717ed
+      url: "https://github.com/LtbLightning/bdk-flutter"
     source: git
     version: "0.31.2-dev.2"
   boolean_selector:
@@ -329,8 +329,8 @@ packages:
     description:
       path: "."
       ref: main
-      resolved-ref: "5be3708f5df7b8d731f4e82a4b96b2898fd276c3"
-      url: "https://github.com/kumulynja/payjoin-flutter.git"
+      resolved-ref: c3d300fcf942cf0e5d42a093af416ac70777a69a
+      url: "https://github.com/LtbLightning/payjoin-flutter"
     source: git
     version: "0.13.0"
   pub_semver:

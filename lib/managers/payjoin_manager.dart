@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
@@ -42,9 +43,10 @@ class PayjoinManager {
     final address = await Address.fromString(
         s: await pjUri.address(), network: Network.signet);
     final script = await address.scriptPubkey();
-    int amount = (((await pjUri.amount()) ?? 0) * 100000000).toInt();
+    double uriAmount = await pjUri.amount() ?? 0;
+    int amountSat = (uriAmount * 100000000.0).round();
     final (psbt, _) = await txBuilder
-        .addRecipient(script, amount)
+        .addRecipient(script, amountSat)
         .feeAbsolute(fee)
         .finish(senderWallet);
     await senderWallet.sign(
@@ -80,7 +82,7 @@ class PayjoinManager {
       'content-length': body.length.toString(),
     };
     final uncheckedProposal = await UncheckedProposal.fromRequest(
-      body: body,
+      body: body.toList(),
       query: '',
       headers: Headers(map: headersMap),
     );

@@ -465,7 +465,7 @@ class _HomeState extends State<Home> {
           wallet,
           await payjoinManager.stringToUri(pjUriController.text),
           feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
-      final originalPsbt = utf8.decode(request.body);
+      final originalPsbt = utf8.decode(request.body.toList());
       debugPrint('Original Sender PSBT: $originalPsbt');
       showBottomSheet(originalPsbt);
 
