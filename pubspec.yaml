@@ -5,12 +5,17 @@ version: 0.3.0
 environment:
   sdk: ">=3.2.3 <4.0.0"
 dependencies:
-  bdk_flutter: ^0.31.2-dev
+  bdk_flutter:
+    git:
+      url: https://github.com/LtbLightning/bdk-flutter
+      ref: bdk-payjoin-integration-fix
   cupertino_icons: ^1.0.2
   flutter:
     sdk: flutter
   payjoin_flutter:
-    git: https://github.com/LtbLightning/payjoin-flutter
+    git:
+      url: https://github.com/LtbLightning/payjoin-flutter
+      ref: main
 dev_dependencies:
   flutter_lints: ^2.0.0
   flutter_test:

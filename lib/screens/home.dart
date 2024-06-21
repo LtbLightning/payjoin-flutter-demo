@@ -6,6 +6,7 @@ import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/send.dart';
 import '../widgets/widgets.dart';
 
 class Home extends StatefulWidget {
@@ -33,6 +34,7 @@ class _HomeState extends State<Home> {
   PayjoinManager payjoinManager = PayjoinManager();
   String pjUri = '';
   bool isRequestSent = false;
+  ContextV1? contextV1;
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
       ? isRequestSent
@@ -459,22 +461,30 @@ class _HomeState extends State<Home> {
   //Sender
   Future performSender() async {
     if (!isRequestSent) {
-      String senderPsbt = await payjoinManager.psbtToBase64String(
-          await payjoinManager.buildOriginalPsbt(
-              wallet,
-              await payjoinManager.stringToUri(pjUriController.text),
-              feeRange?.feeValue ?? FeeRangeEnum.high.feeValue));
-      showBottomSheet(senderPsbt);
+      final (request, ctx) = await payjoinManager.buildPayjoinRequest(
+          wallet,
+          await payjoinManager.stringToUri(pjUriController.text),
+          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
+      final originalPsbt = utf8.decode(request.body);
+      debugPrint('Original Sender PSBT: $originalPsbt');
+      showBottomSheet(originalPsbt);
 
       setState(() {
-        isRequestSent = true;
+        isRequestSent =
+            true; // Todo: this is not needed since we can check for contextV1 not being null
+        contextV1 = ctx;
       });
     } // Finalize payjoin
     else {
       String receiverPsbt = receiverPsbtController.text;
+      debugPrint('Receiver PSBT: $receiverPsbt');
+      final processedResponse =
+          await contextV1!.processResponse(response: utf8.encode(receiverPsbt));
+      debugPrint('Processed Response: $processedResponse');
       final transaction =
-          await payjoinManager.extractPjTx(wallet, receiverPsbt);
-      blockchain.broadcast(transaction: transaction);
+          await payjoinManager.extractPjTx(wallet, processedResponse);
+      final txId = await blockchain.broadcast(transaction: transaction);
+      print('TxId: $txId');
     }
   }
 
@@ -483,14 +493,13 @@ class _HomeState extends State<Home> {
     if (pjUri.isEmpty) {
       buildReceiverPjUri();
     } else {
-      final (String? receiverPsbt, contextV1) = await payjoinManager
-          .handlePjRequest(psbtController.text, pjUri, wallet);
+      final receiverPsbt =
+          await payjoinManager.handlePjRequest(psbtController.text, wallet);
       if (receiverPsbt == null) {
         return throw Exception("Response is null");
       }
-      final checkedPayjoinProposal =
-          await contextV1.processResponse(response: utf8.encode(receiverPsbt));
-      showBottomSheet(checkedPayjoinProposal);
+
+      showBottomSheet(receiverPsbt);
     }
   }
 
