@@ -485,6 +485,7 @@ class _HomeState extends State<Home> {
           await payjoinManager.extractPjTx(wallet, processedResponse);
       final txId = await blockchain.broadcast(transaction: transaction);
       print('TxId: $txId');
+      showBottomSheet(txId);
     }
   }
 
