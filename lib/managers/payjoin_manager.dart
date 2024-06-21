@@ -1,8 +1,11 @@
+import 'dart:convert';
+import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
 import 'package:flutter/widgets.dart';
 import 'package:payjoin_flutter/receive/v1.dart' as v1;
+import 'package:payjoin_flutter/receive/v1.dart';
 // ignore: implementation_imports
 import 'package:payjoin_flutter/src/generated/utils/types.dart' as types;
 import 'package:payjoin_flutter/common.dart';
@@ -34,49 +37,60 @@ class PayjoinManager {
   }
 
   //Sender psbt
-  Future<PartiallySignedTransaction> buildOriginalPsbt(
-      senderWallet, pj_uri.Uri pjUri, double feeRate) async {
+  Future<(Request, send.ContextV1)> buildPayjoinRequest(
+      Wallet senderWallet, pj_uri.Uri pjUri, int fee) async {
     final txBuilder = TxBuilder();
     final address = await Address.fromString(
-        s: await pjUri.address(), network: Network.regtest);
+        s: await pjUri.address(), network: Network.signet);
     final script = await address.scriptPubkey();
-    int amount = (((await pjUri.amount()) ?? 0) * 100000000).toInt();
-    final psbt = await txBuilder
-        .addRecipient(script, amount)
-        .feeRate(feeRate)
+    double uriAmount = await pjUri.amount() ?? 0;
+    int amountSat = (uriAmount * 100000000.0).round();
+    final (psbt, _) = await txBuilder
+        .addRecipient(script, amountSat)
+        .feeAbsolute(fee)
         .finish(senderWallet);
-    return psbt.$1;
+    await senderWallet.sign(
+      psbt: psbt,
+      signOptions: const SignOptions(
+        trustWitnessUtxo: true,
+        allowAllSighashes: false,
+        removePartialSigs: true,
+        tryFinalize: true,
+        signWithTapInternalKey: true,
+        allowGrinding: false,
+      ),
+    );
+
+    final psbtBase64 = await psbt.serialize();
+    debugPrint('Original Sender Psbt for request: $psbtBase64');
+
+    final requestBuilder = await send.RequestBuilder.fromPsbtAndUri(
+        psbtBase64: psbtBase64, uri: pjUri);
+    final requestContext = await requestBuilder.buildRecommended(minFeeRate: 1);
+
+    return requestContext.extractContextV1();
   }
 
-  Future<(String?, send.ContextV1)> handlePjRequest(
-      String psbtBase64, String uriStr, receiverWallet) async {
-    final uri = await pj_uri.Uri.fromString(uriStr);
+  Future<String?> handlePjRequest(String psbtBase64, receiverWallet) async {
+    // Normally the request with the original psbt as body, a query and headers is received
+    //  by listening to a server, but we only pass the original psbt here and
+    //  add the headers and a mock query ourselves.
+    final List<int> body = utf8.encode(psbtBase64);
 
-    final (req, cxt) = await (await (await send.RequestBuilder.fromPsbtAndUri(
-                psbtBase64: psbtBase64, uri: uri))
-            .buildWithAdditionalFee(
-                maxFeeContribution: 1000,
-                minFeeRate: 0,
-                clampFeeContribution: false))
-        .extractContextV1();
-
-    final headers = Headers(map: {
+    Map<String, String> headersMap = {
       'content-type': 'text/plain',
-      'content-length': req.body.length.toString(),
-    });
-    final uncheckedProposal = await v1.UncheckedProposal.fromRequest(
-        body: req.body.toList(),
-        query: (await req.url.query())!,
-        headers: headers);
+      'content-length': body.length.toString(),
+    };
+    final uncheckedProposal = await UncheckedProposal.fromRequest(
+      body: body.toList(),
+      query: '',
+      headers: Headers(map: headersMap),
+    );
 
     final proposal = await handleProposal(
         proposal: uncheckedProposal, receiverWallet: receiverWallet);
 
-    return (await proposal?.psbt(), cxt);
-  }
-
-  Future<bool> isReceiverOutput(Uint8List bytes, Wallet wallet) async {
-    return true;
+    return proposal.psbt();
   }
 
   Future<bool> isOwned(Uint8List bytes, Wallet wallet) async {
@@ -86,24 +100,23 @@ class PayjoinManager {
 
   Future<String> processPsbt(String preProcessed, Wallet wallet) async {
     final psbt = await PartiallySignedTransaction.fromString(preProcessed);
-    final isFinalized = await wallet.sign(
-        psbt: psbt,
-        signOptions: const SignOptions(
-            multiSig: false,
-            trustWitnessUtxo: true,
-            allowAllSighashes: true,
-            removePartialSigs: true,
-            tryFinalize: true,
-            signWithTapInternalKey: true,
-            allowGrinding: true));
-    if (isFinalized) {
-      return await psbt.serialize();
-    } else {
-      throw Exception("The psbt can not finalized");
-    }
+    print('PSBT before: ${await psbt.serialize()}');
+    await wallet.sign(
+      psbt: psbt,
+      signOptions: const SignOptions(
+        trustWitnessUtxo: true,
+        allowAllSighashes: false,
+        removePartialSigs: true,
+        tryFinalize: true,
+        signWithTapInternalKey: true,
+        allowGrinding: false,
+      ),
+    );
+    print('PSBT after: ${await psbt.serialize()}');
+    return psbt.serialize();
   }
 
-  Future<v1.PayjoinProposal?> handleProposal({
+  Future<v1.PayjoinProposal> handleProposal({
     required v1.UncheckedProposal proposal,
     required Wallet receiverWallet,
   }) async {
@@ -121,20 +134,23 @@ class PayjoinManager {
         return false;
       }))
               .identifyReceiverOutputs(
-        isReceiverOutput: (i) => isReceiverOutput(i, receiverWallet),
+        isReceiverOutput: (i) => isOwned(i, receiverWallet),
       );
 
       final availableInputs = await receiverWallet.listUnspent();
       Map<int, types.OutPoint> candidateInputs = {
         for (var input in availableInputs)
           input.txout.value: types.OutPoint(
-              txid: input.outpoint.txid.toString(), vout: input.outpoint.vout)
+            txid: input.outpoint.txid.toString(),
+            vout: input.outpoint.vout,
+          )
       };
-      final selectedOutpoint =
-          await payjoin.tryPreservingPrivacy(candidateInputs: candidateInputs);
+      final selectedOutpoint = await payjoin.tryPreservingPrivacy(
+        candidateInputs: candidateInputs,
+      );
       var selectedUtxo = availableInputs.firstWhere(
           (i) =>
-              i.outpoint.txid.toString() == selectedOutpoint.txid &&
+              i.outpoint.txid == selectedOutpoint.txid &&
               i.outpoint.vout == selectedOutpoint.vout,
           orElse: () => throw Exception('UTXO not found'));
       var txoToContribute = types.TxOut(
@@ -147,7 +163,9 @@ class PayjoinManager {
         vout: selectedUtxo.outpoint.vout,
       );
       payjoin.contributeWitnessInput(
-          txo: txoToContribute, outpoint: outpointToContribute);
+        txo: txoToContribute,
+        outpoint: outpointToContribute,
+      );
       final newReceiverAddress = await ((await receiverWallet.getAddress(
                   addressIndex: const AddressIndex.increase()))
               .address)
@@ -158,22 +176,25 @@ class PayjoinManager {
       return payjoinProposal;
     } on Exception catch (e) {
       debugPrint(e.toString());
+      rethrow;
     }
-    return null;
   }
 
   Future<Transaction> extractPjTx(
       Wallet senderWallet, String psbtString) async {
     final psbt = await PartiallySignedTransaction.fromString(psbtString);
-    senderWallet.sign(psbt: psbt);
-    var transaction = psbt.extractTx();
+    print('PSBT before: ${await psbt.serialize()}');
+    senderWallet.sign(
+        psbt: psbt,
+        signOptions: const SignOptions(
+            trustWitnessUtxo: true,
+            allowAllSighashes: false,
+            removePartialSigs: true,
+            tryFinalize: true,
+            signWithTapInternalKey: true,
+            allowGrinding: false));
+    print('PSBT after: ${await psbt.serialize()}');
+    var transaction = await psbt.extractTx();
     return transaction;
-  }
-
-  Future<String> psbtToBase64String(PartiallySignedTransaction psbt) async {
-    String bytes = await psbt.serialize();
-    return bytes;
-    // String base64String = base64Encode(bytes);
-    // return base64String;
   }
 }

@@ -6,6 +6,7 @@ import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/send.dart';
 import '../widgets/widgets.dart';
 
 class Home extends StatefulWidget {
@@ -31,14 +32,15 @@ class _HomeState extends State<Home> {
   bool isReceiver = false;
   FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
-  dynamic pjUri;
+  String pjUri = '';
   bool isRequestSent = false;
+  ContextV1? contextV1;
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
       ? isRequestSent
           ? "Finalize Payjoin"
           : isReceiver
-              ? pjUri != null
+              ? pjUri.isNotEmpty
                   ? "Handle Request"
                   : "Build Pj Uri"
               : "Perform Payjoin"
@@ -59,12 +61,12 @@ class _HomeState extends State<Home> {
       for (var e in [KeychainKind.externalChain, KeychainKind.internalChain]) {
         final mnemonic = await Mnemonic.fromString(mnemonicStr);
         final descriptorSecretKey = await DescriptorSecretKey.create(
-          network: Network.regtest,
+          network: Network.signet,
           mnemonic: mnemonic,
         );
         final descriptor = await Descriptor.newBip86(
             secretKey: descriptorSecretKey,
-            network: Network.regtest,
+            network: Network.signet,
             keychain: e);
         descriptors.add(descriptor);
       }
@@ -138,7 +140,7 @@ class _HomeState extends State<Home> {
     try {
       final txBuilder = TxBuilder();
       final address =
-          await Address.fromString(s: addressStr, network: Network.regtest);
+          await Address.fromString(s: addressStr, network: Network.signet);
       final script = await address.scriptPubkey();
 
       final psbt = await txBuilder
@@ -174,8 +176,7 @@ class _HomeState extends State<Home> {
                   validateDomain: false)) */
   ///Step2:Client
   blockchainInit() async {
-    String esploraUrl =
-        Platform.isAndroid ? 'http://10.0.2.2:30000' : 'http://127.0.0.1:30000';
+    String esploraUrl = 'https://mutinynet.ltbl.io/api';
     try {
       blockchain = await Blockchain.create(
           config: BlockchainConfig.esplora(
@@ -255,7 +256,7 @@ class _HomeState extends State<Home> {
                       text: "Create Wallet",
                       callback: () async {
                         await createOrRestoreWallet(mnemonic.text,
-                            Network.regtest, "password", "m/84'/1'/0'");
+                            Network.signet, "password", "m/84'/1'/0'");
                       },
                     ),
                     SubmitButton(
@@ -434,7 +435,7 @@ class _HomeState extends State<Home> {
   }
 
   Widget buildReceiverFields() {
-    return pjUri == null
+    return pjUri.isEmpty
         ? buildFields()
         : TextFieldContainer(
             child: TextFormField(
@@ -460,38 +461,46 @@ class _HomeState extends State<Home> {
   //Sender
   Future performSender() async {
     if (!isRequestSent) {
-      String senderPsbt = await payjoinManager.psbtToBase64String(
-          await payjoinManager.buildOriginalPsbt(
-              wallet,
-              await payjoinManager.stringToUri(pjUriController.text),
-              feeRange?.feeValue ?? FeeRangeEnum.high.feeValue));
-      showBottomSheet(senderPsbt);
+      final (request, ctx) = await payjoinManager.buildPayjoinRequest(
+          wallet,
+          await payjoinManager.stringToUri(pjUriController.text),
+          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
+      final originalPsbt = utf8.decode(request.body.toList());
+      debugPrint('Original Sender PSBT: $originalPsbt');
+      showBottomSheet(originalPsbt);
 
       setState(() {
-        isRequestSent = true;
+        isRequestSent =
+            true; // Todo: this is not needed since we can check for contextV1 not being null
+        contextV1 = ctx;
       });
     } // Finalize payjoin
     else {
       String receiverPsbt = receiverPsbtController.text;
+      debugPrint('Receiver PSBT: $receiverPsbt');
+      final processedResponse =
+          await contextV1!.processResponse(response: utf8.encode(receiverPsbt));
+      debugPrint('Processed Response: $processedResponse');
       final transaction =
-          await payjoinManager.extractPjTx(wallet, receiverPsbt);
-      blockchain.broadcast(transaction: transaction);
+          await payjoinManager.extractPjTx(wallet, processedResponse);
+      final txId = await blockchain.broadcast(transaction: transaction);
+      print('TxId: $txId');
+      showBottomSheet(txId);
     }
   }
 
   //Receiver
   Future performReceiver() async {
-    if (pjUri == null) {
+    if (pjUri.isEmpty) {
       buildReceiverPjUri();
     } else {
-      final (String? receiverPsbt, contextV1) = await payjoinManager
-          .handlePjRequest(psbtController.text, pjUri, wallet);
+      final receiverPsbt =
+          await payjoinManager.handlePjRequest(psbtController.text, wallet);
       if (receiverPsbt == null) {
         return throw Exception("Response is null");
       }
-      final checkedPayjoinProposal =
-          await contextV1.processResponse(response: utf8.encode(receiverPsbt));
-      showBottomSheet(checkedPayjoinProposal);
+
+      showBottomSheet(receiverPsbt);
     }
   }
 
@@ -500,11 +509,10 @@ class _HomeState extends State<Home> {
       double.parse(amountController.text),
       recipientAddress.text,
     );
-    payjoinManager.stringToUri(pjStr).then((value) {
-      setState(() {
-        displayText = pjStr;
-        pjUri = value;
-      });
+
+    setState(() {
+      displayText = pjStr;
+      pjUri = pjStr;
     });
   }
 }
