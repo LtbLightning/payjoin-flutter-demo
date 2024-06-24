@@ -125,7 +125,7 @@ AppBar buildAppBar(BuildContext context) {
     actions: [
       Padding(
         padding: const EdgeInsets.only(right: 20, bottom: 10, top: 10),
-        child: Image.asset("assets/bdk_logo.png"),
+        child: Image.asset("assets/pdk_logo.png"),
       )
     ],
     leading: Icon(
