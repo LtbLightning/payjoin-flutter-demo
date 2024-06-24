@@ -133,8 +133,8 @@ AppBar buildAppBar(BuildContext context) {
       color: Theme.of(context).secondaryHeaderColor,
       size: 40,
     ),
-    title: Text("Payjoin Tutorial",
-        style: Theme.of(context).textTheme.displayLarge),
+    title:
+        Text("Payjoin Demo", style: Theme.of(context).textTheme.displayLarge),
   );
 }
 

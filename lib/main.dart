@@ -14,7 +14,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'BDK-FLUTTER TUTORIAL',
+      title: 'Payjoin Flutter Demo',
       theme: theme(),
       home: const Home(),
     );
