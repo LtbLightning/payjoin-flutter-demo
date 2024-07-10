@@ -3,6 +3,8 @@ import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
+import 'package:bdk_flutter_demo/core/flutter_hce.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:payjoin_flutter/receive/v1.dart' as v1;
 import 'package:payjoin_flutter/receive/v1.dart';
@@ -196,5 +198,28 @@ class PayjoinManager {
     print('PSBT after: ${await psbt.serialize()}');
     var transaction = await psbt.extractTx();
     return transaction;
+  }
+
+  Future<void> sendNFCMessage(nfcMessage) async {
+    final flutterHce = FlutterHce();
+    try {
+      await flutterHce.sendNfcMessage(nfcMessage);
+    } on PlatformException catch (e) {
+      debugPrint("Err : $e");
+    }
+  }
+
+  Future<String> readNfc() async {
+    const platform = MethodChannel('flutter_hce');
+
+    String nfcData;
+    try {
+      final String result = await platform.invokeMethod('readNfcMessage');
+      nfcData = 'NFC Data: $result';
+    } on PlatformException catch (e) {
+      nfcData = "Hata oluştu: '${e.message}'.";
+    }
+
+    return nfcData;
   }
 }
