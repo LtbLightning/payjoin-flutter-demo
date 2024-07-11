@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
 import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
@@ -403,7 +402,22 @@ class _HomeState extends State<Home> {
             maxLines: 5,
             decoration: const InputDecoration(hintText: "Enter receiver psbt"),
           ),
-        )
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text("Read with nfc"),
+            IconButton(
+              icon: const Icon(Icons.nfc),
+              color: Colors.deepPurple,
+              onPressed: () async {
+                final receiverPsbt = await payjoinManager.readNfc();
+                debugPrint('receiverPsbtController: $receiverPsbt');
+                receiverPsbtController.text = receiverPsbt;
+              },
+            ),
+          ],
+        ),
       ];
     } else {
       return [
@@ -422,6 +436,21 @@ class _HomeState extends State<Home> {
             decoration: const InputDecoration(hintText: "Enter pjUri"),
           ),
         ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text("Read with nfc"),
+            IconButton(
+              icon: const Icon(Icons.nfc),
+              color: Colors.deepPurple,
+              onPressed: () async {
+                final pjUriText = await payjoinManager.readNfc();
+                debugPrint('pjUriText: $pjUriText');
+                pjUriController.text = pjUriText;
+              },
+            ),
+          ],
+        ),
         Center(
           child: TextButton(
             onPressed: () => chooseFeeRange(),
@@ -437,14 +466,33 @@ class _HomeState extends State<Home> {
   Widget buildReceiverFields() {
     return pjUri.isEmpty
         ? buildFields()
-        : TextFieldContainer(
-            child: TextFormField(
-              controller: psbtController,
-              style: Theme.of(context).textTheme.bodyLarge,
-              keyboardType: TextInputType.multiline,
-              maxLines: 5,
-              decoration: const InputDecoration(hintText: "Enter psbt"),
-            ),
+        : Column(
+            children: [
+              TextFieldContainer(
+                child: TextFormField(
+                  controller: psbtController,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  keyboardType: TextInputType.multiline,
+                  maxLines: 5,
+                  decoration: const InputDecoration(hintText: "Enter psbt"),
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("Read with nfc"),
+                  IconButton(
+                    icon: const Icon(Icons.nfc),
+                    color: Colors.deepPurple,
+                    onPressed: () async {
+                      final pjUriText = await payjoinManager.readNfc();
+                      debugPrint('pjUriText: $pjUriText');
+                      psbtController.text = pjUriText;
+                    },
+                  ),
+                ],
+              ),
+            ],
           );
   }
 
@@ -461,14 +509,15 @@ class _HomeState extends State<Home> {
   //Sender
   Future performSender() async {
     if (!isRequestSent) {
+      final pjUriText = pjUriController.text;
       final (request, ctx) = await payjoinManager.buildPayjoinRequest(
           wallet,
-          await payjoinManager.stringToUri(pjUriController.text),
+          await payjoinManager.stringToUri(pjUriText),
           feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
       final originalPsbt = utf8.decode(request.body.toList());
       debugPrint('Original Sender PSBT: $originalPsbt');
       showBottomSheet(originalPsbt);
-
+      payjoinManager.sendNFCMessage(originalPsbt);
       setState(() {
         isRequestSent =
             true; // Todo: this is not needed since we can check for contextV1 not being null
@@ -485,6 +534,8 @@ class _HomeState extends State<Home> {
           await payjoinManager.extractPjTx(wallet, processedResponse);
       final txId = await blockchain.broadcast(transaction: transaction);
       print('TxId: $txId');
+      payjoinManager.sendNFCMessage(txId);
+
       showBottomSheet(txId);
     }
   }
@@ -494,11 +545,15 @@ class _HomeState extends State<Home> {
     if (pjUri.isEmpty) {
       buildReceiverPjUri();
     } else {
+      final sendercPsbt = psbtController.text;
+      debugPrint('Sender PSBT: $sendercPsbt');
+
       final receiverPsbt =
-          await payjoinManager.handlePjRequest(psbtController.text, wallet);
+          await payjoinManager.handlePjRequest(sendercPsbt, wallet);
       if (receiverPsbt == null) {
         return throw Exception("Response is null");
       }
+      payjoinManager.sendNFCMessage(receiverPsbt);
 
       showBottomSheet(receiverPsbt);
     }
@@ -509,6 +564,7 @@ class _HomeState extends State<Home> {
       double.parse(amountController.text),
       recipientAddress.text,
     );
+    payjoinManager.sendNFCMessage(pjStr);
 
     setState(() {
       displayText = pjStr;
