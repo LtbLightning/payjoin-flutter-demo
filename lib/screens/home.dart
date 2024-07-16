@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:bdk_flutter/bdk_flutter.dart';
 import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
@@ -30,14 +29,15 @@ class _HomeState extends State<Home> {
   TextEditingController receiverPsbtController = TextEditingController();
   bool _isPayjoinEnabled = false;
   bool isReceiver = false;
+  bool isV2 = true;
+  Object? v2Session;
+  RequestContext? reqCtx;
   FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
   String pjUri = '';
-  bool isRequestSent = false;
-  ContextV1? contextV1;
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
-      ? isRequestSent
+      ? reqCtx != null
           ? "Finalize Payjoin"
           : isReceiver
               ? pjUri.isNotEmpty
@@ -196,6 +196,12 @@ class _HomeState extends State<Home> {
   Future<void> changePayjoin(bool value) async {
     setState(() {
       _isPayjoinEnabled = value;
+    });
+  }
+
+  Future<void> changeV2(bool value) async {
+    setState(() {
+      isV2 = value;
     });
   }
 
@@ -375,9 +381,15 @@ class _HomeState extends State<Home> {
     return Column(
       children: [
         CustomSwitchTile(
-            title: isReceiver ? "Receiver" : "Sender",
-            value: isReceiver,
-            onChanged: changeFrom),
+          title: isV2 ? "v2" : "v1",
+          value: isV2,
+          onChanged: changeV2,
+        ),
+        CustomSwitchTile(
+          title: isReceiver ? "Receiver" : "Sender",
+          value: isReceiver,
+          onChanged: changeFrom,
+        ),
         if (isReceiver) ...[
           buildReceiverFields(),
         ] else
@@ -387,25 +399,7 @@ class _HomeState extends State<Home> {
   }
 
   List<Widget> buildSenderFields() {
-    if (isRequestSent) {
-      return [
-        TextFieldContainer(
-          child: TextFormField(
-            controller: receiverPsbtController,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Please enter the receiver psbt';
-              }
-              return null;
-            },
-            style: Theme.of(context).textTheme.bodyLarge,
-            keyboardType: TextInputType.multiline,
-            maxLines: 5,
-            decoration: const InputDecoration(hintText: "Enter receiver psbt"),
-          ),
-        )
-      ];
-    } else {
+    if (reqCtx == null) {
       return [
         TextFieldContainer(
           child: TextFormField(
@@ -431,21 +425,45 @@ class _HomeState extends State<Home> {
           ),
         ),
       ];
+    } else {
+      if (!isV2) {
+        return [
+          TextFieldContainer(
+            child: TextFormField(
+              controller: receiverPsbtController,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter the receiver psbt';
+                }
+                return null;
+              },
+              style: Theme.of(context).textTheme.bodyLarge,
+              keyboardType: TextInputType.multiline,
+              maxLines: 5,
+              decoration:
+                  const InputDecoration(hintText: "Enter receiver psbt"),
+            ),
+          )
+        ];
+      }
+      return [];
     }
   }
 
   Widget buildReceiverFields() {
     return pjUri.isEmpty
         ? buildFields()
-        : TextFieldContainer(
-            child: TextFormField(
-              controller: psbtController,
-              style: Theme.of(context).textTheme.bodyLarge,
-              keyboardType: TextInputType.multiline,
-              maxLines: 5,
-              decoration: const InputDecoration(hintText: "Enter psbt"),
-            ),
-          );
+        : isV2
+            ? Container()
+            : TextFieldContainer(
+                child: TextFormField(
+                  controller: psbtController,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  keyboardType: TextInputType.multiline,
+                  maxLines: 5,
+                  decoration: const InputDecoration(hintText: "Enter psbt"),
+                ),
+              );
   }
 
   Future performPayjoin(formKey) async {
@@ -460,29 +478,43 @@ class _HomeState extends State<Home> {
 
   //Sender
   Future performSender() async {
-    if (!isRequestSent) {
-      final (request, ctx) = await payjoinManager.buildPayjoinRequest(
-          wallet,
-          await payjoinManager.stringToUri(pjUriController.text),
-          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
-      final originalPsbt = utf8.decode(request.body.toList());
-      debugPrint('Original Sender PSBT: $originalPsbt');
-      showBottomSheet(originalPsbt);
+    // Build payjoin request with original psbt
+    if (reqCtx == null) {
+      final request = await payjoinManager.buildPayjoinRequest(
+        wallet,
+        await payjoinManager.stringToUri(pjUriController.text),
+        feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+      );
+      if (isV2) {
+        await payjoinManager.requestPayjoinProposal(request);
+      } else {
+        final (req, _) = await request.extractContextV1();
+        final originalPsbt = utf8.decode(req.body.toList());
+        debugPrint('Original Sender PSBT: $originalPsbt');
+        showBottomSheet(originalPsbt);
+      }
 
       setState(() {
-        isRequestSent =
-            true; // Todo: this is not needed since we can check for contextV1 not being null
-        contextV1 = ctx;
+        reqCtx = request;
       });
     } // Finalize payjoin
     else {
-      String receiverPsbt = receiverPsbtController.text;
-      debugPrint('Receiver PSBT: $receiverPsbt');
-      final processedResponse =
-          await contextV1!.processResponse(response: utf8.encode(receiverPsbt));
-      debugPrint('Processed Response: $processedResponse');
+      String checkedProposal;
+      if (isV2) {
+        final proposalPsbt =
+            await payjoinManager.requestV2PayjoinProposal(reqCtx!);
+        debugPrint('Receiver proposed PSBT: $proposalPsbt');
+        checkedProposal =
+            await payjoinManager.processV2Proposal(reqCtx!, proposalPsbt!);
+      } else {
+        final proposalPsbt = receiverPsbtController.text;
+        debugPrint('Receiver proposed PSBT: $proposalPsbt');
+        checkedProposal =
+            await payjoinManager.processV1Proposal(reqCtx!, proposalPsbt);
+      }
+
       final transaction =
-          await payjoinManager.extractPjTx(wallet, processedResponse);
+          await payjoinManager.extractPjTx(wallet, checkedProposal);
       final txId = await blockchain.broadcast(transaction: transaction);
       print('TxId: $txId');
       showBottomSheet(txId);
@@ -491,24 +523,39 @@ class _HomeState extends State<Home> {
 
   //Receiver
   Future performReceiver() async {
+    // Create a new payjoin uri (and session if v2)
     if (pjUri.isEmpty) {
-      buildReceiverPjUri();
-    } else {
-      final receiverPsbt =
-          await payjoinManager.handlePjRequest(psbtController.text, wallet);
-      if (receiverPsbt == null) {
-        return throw Exception("Response is null");
-      }
+      await buildReceiverPjUri();
+    } // Handle payjoin request and send back the payjoin proposal
+    else {
+      if (isV2) {
+        await payjoinManager.handleV2Request(v2Session);
+      } else {
+        final proposalPsbt =
+            await payjoinManager.handleV1Request(psbtController.text, wallet);
+        if (proposalPsbt == null) {
+          return throw Exception("Response is null");
+        }
 
-      showBottomSheet(receiverPsbt);
+        showBottomSheet(proposalPsbt);
+      }
     }
   }
 
   Future<void> buildReceiverPjUri() async {
-    String pjStr = await payjoinManager.buildPjStr(
-      double.parse(amountController.text),
-      recipientAddress.text,
-    );
+    String pjStr;
+    final amount = double.parse(amountController.text);
+    if (isV2) {
+      v2Session = await payjoinManager.startV2ReceiveSession(
+        address: recipientAddress.text,
+      );
+      pjStr = await v2Session.pjUriBuilder.amount(amount).build();
+    } else {
+      pjStr = await payjoinManager.buildV1PjStr(
+        amount,
+        recipientAddress.text,
+      );
+    }
 
     setState(() {
       displayText = pjStr;
