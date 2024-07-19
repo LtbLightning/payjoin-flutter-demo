@@ -1,10 +1,12 @@
 import 'dart:convert';
 
-import 'package:bdk_flutter/bdk_flutter.dart';
+import 'package:bdk_flutter/bdk_flutter.dart' as bdk;
 import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/common.dart';
+import 'package:payjoin_flutter/receive/v2.dart';
 import 'package:payjoin_flutter/send.dart';
 import '../widgets/widgets.dart';
 
@@ -16,8 +18,8 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  late Wallet wallet;
-  late Blockchain blockchain;
+  late bdk.Wallet wallet;
+  late bdk.Blockchain blockchain;
   String? displayText;
   String? address;
   String balance = "0";
@@ -30,7 +32,7 @@ class _HomeState extends State<Home> {
   bool _isPayjoinEnabled = false;
   bool isReceiver = false;
   bool isV2 = true;
-  Object? v2Session;
+  ActiveSession? v2Session;
   RequestContext? reqCtx;
   FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
@@ -47,7 +49,8 @@ class _HomeState extends State<Home> {
       : "Send Bit";
 
   Future<void> generateMnemonicHandler() async {
-    var res = await (await Mnemonic.create(WordCount.words12)).asString();
+    var res =
+        await (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
 
     setState(() {
       mnemonic.text = res;
@@ -55,18 +58,21 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<List<Descriptor>> getDescriptors(String mnemonicStr) async {
-    final descriptors = <Descriptor>[];
+  Future<List<bdk.Descriptor>> getDescriptors(String mnemonicStr) async {
+    final descriptors = <bdk.Descriptor>[];
     try {
-      for (var e in [KeychainKind.externalChain, KeychainKind.internalChain]) {
-        final mnemonic = await Mnemonic.fromString(mnemonicStr);
-        final descriptorSecretKey = await DescriptorSecretKey.create(
-          network: Network.signet,
+      for (var e in [
+        bdk.KeychainKind.externalChain,
+        bdk.KeychainKind.internalChain
+      ]) {
+        final mnemonic = await bdk.Mnemonic.fromString(mnemonicStr);
+        final descriptorSecretKey = await bdk.DescriptorSecretKey.create(
+          network: bdk.Network.signet,
           mnemonic: mnemonic,
         );
-        final descriptor = await Descriptor.newBip86(
+        final descriptor = await bdk.Descriptor.newBip86(
             secretKey: descriptorSecretKey,
-            network: Network.signet,
+            network: bdk.Network.signet,
             keychain: e);
         descriptors.add(descriptor);
       }
@@ -81,18 +87,18 @@ class _HomeState extends State<Home> {
 
   createOrRestoreWallet(
     String mnemonic,
-    Network network,
+    bdk.Network network,
     String? password,
     String path, //TODO: Derived error: Address contains key path
   ) async {
     try {
       final descriptors = await getDescriptors(mnemonic);
       await blockchainInit();
-      final res = await Wallet.create(
+      final res = await bdk.Wallet.create(
           descriptor: descriptors[0],
           changeDescriptor: descriptors[1],
           network: network,
-          databaseConfig: const DatabaseConfig.memory());
+          databaseConfig: const bdk.DatabaseConfig.memory());
       setState(() {
         wallet = res;
       });
@@ -120,9 +126,9 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<AddressInfo> getNewAddress() async {
-    final res =
-        await wallet.getAddress(addressIndex: const AddressIndex.increase());
+  Future<bdk.AddressInfo> getNewAddress() async {
+    final res = await wallet.getAddress(
+        addressIndex: const bdk.AddressIndex.increase());
     if (kDebugMode) {
       print(res.address);
     }
@@ -138,13 +144,13 @@ class _HomeState extends State<Home> {
 
   Future<void> sendTx(String addressStr, int amount) async {
     try {
-      final txBuilder = TxBuilder();
-      final address =
-          await Address.fromString(s: addressStr, network: Network.signet);
+      final txBuilder = bdk.TxBuilder();
+      final address = await bdk.Address.fromString(
+          s: addressStr, network: bdk.Network.signet);
       final script = await address.scriptPubkey();
 
       final psbt = await txBuilder
-          .addRecipient(script, amount)
+          .addRecipient(script, BigInt.from(amount))
           .feeRate(1.0)
           .finish(wallet);
 
@@ -178,9 +184,10 @@ class _HomeState extends State<Home> {
   blockchainInit() async {
     String esploraUrl = 'https://mutinynet.ltbl.io/api';
     try {
-      blockchain = await Blockchain.create(
-          config: BlockchainConfig.esplora(
-              config: EsploraConfig(baseUrl: esploraUrl, stopGap: 10)));
+      blockchain = await bdk.Blockchain.create(
+          config: bdk.BlockchainConfig.esplora(
+              config: bdk.EsploraConfig(
+                  baseUrl: esploraUrl, stopGap: BigInt.from(10))));
     } on Exception catch (e) {
       setState(() {
         displayText = "Error: ${e.toString()}";
@@ -262,7 +269,7 @@ class _HomeState extends State<Home> {
                       text: "Create Wallet",
                       callback: () async {
                         await createOrRestoreWallet(mnemonic.text,
-                            Network.signet, "password", "m/84'/1'/0'");
+                            bdk.Network.signet, "password", "m/84'/1'/0'");
                       },
                     ),
                     SubmitButton(
@@ -486,7 +493,7 @@ class _HomeState extends State<Home> {
         feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
       );
       if (isV2) {
-        await payjoinManager.requestPayjoinProposal(request);
+        await payjoinManager.requestV2PayjoinProposal(request);
       } else {
         final (req, _) = await request.extractContextV1();
         final originalPsbt = utf8.decode(req.body.toList());
@@ -529,7 +536,7 @@ class _HomeState extends State<Home> {
     } // Handle payjoin request and send back the payjoin proposal
     else {
       if (isV2) {
-        await payjoinManager.handleV2Request(v2Session);
+        await payjoinManager.handleV2Request(v2Session!, wallet);
       } else {
         final proposalPsbt =
             await payjoinManager.handleV1Request(psbtController.text, wallet);
@@ -544,12 +551,18 @@ class _HomeState extends State<Home> {
 
   Future<void> buildReceiverPjUri() async {
     String pjStr;
-    final amount = double.parse(amountController.text);
+    final amount = int.parse(amountController.text);
     if (isV2) {
-      v2Session = await payjoinManager.startV2ReceiveSession(
+      ActiveSession session;
+      (pjStr, session) = await payjoinManager.buildV2PjStr(
         address: recipientAddress.text,
+        network: Network.signet,
+        expireAfter: 30,
       );
-      pjStr = await v2Session.pjUriBuilder.amount(amount).build();
+
+      setState(() {
+        v2Session = session;
+      });
     } else {
       pjStr = await payjoinManager.buildV1PjStr(
         amount,
