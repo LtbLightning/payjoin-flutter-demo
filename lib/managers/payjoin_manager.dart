@@ -236,9 +236,9 @@ class PayjoinManager {
     pj_uri.OhttpKeys ohttpKeys = await pj_uri.fetchOhttpKeys(
       ohttpRelay: ohttpRelayUrl,
       payjoinDirectory: payjoinDirectoryUrl,
-      certDer: [],
     );
 
+    final keysString = ohttpKeys.field0.toString();
     final session = await v2.SessionInitializer.create(
       address: address,
       ohttpRelay: ohttpRelayUrl,
@@ -252,6 +252,9 @@ class PayjoinManager {
     final response = await http.post(
       Uri.parse(req.url.asString()),
       body: req.body,
+      headers: {
+        'Content-Type': v2ContentType,
+      },
     );
     final activeSession = await session.processResponse(
       body: response.bodyBytes,

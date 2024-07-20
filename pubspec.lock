@@ -336,9 +336,9 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: main
-      resolved-ref: cb0a1300c570d0880fbd74abe7c0206cd3faa5b2
-      url: "https://github.com/LtbLightning/payjoin-flutter"
+      ref: session-init-extract-req-fix
+      resolved-ref: e94a26bf55facb79653dc5f7e906be0b5acb7475
+      url: "https://github.com/kumulynja/payjoin-flutter"
     source: git
     version: "0.18.0"
   pub_semver:

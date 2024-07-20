@@ -555,6 +555,7 @@ class _HomeState extends State<Home> {
     if (isV2) {
       ActiveSession session;
       (pjStr, session) = await payjoinManager.buildV2PjStr(
+        amount: amount,
         address: recipientAddress.text,
         network: Network.signet,
         expireAfter: 30,
