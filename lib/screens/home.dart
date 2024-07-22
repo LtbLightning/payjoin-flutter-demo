@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:bdk_flutter/bdk_flutter.dart' as bdk;
 import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
@@ -115,7 +116,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> getBalance() async {
-    final balanceObj = await wallet.getBalance();
+    final balanceObj = wallet.getBalance();
     final res = "Total Balance: ${balanceObj.total.toString()}";
     if (kDebugMode) {
       print(res);
@@ -182,7 +183,7 @@ class _HomeState extends State<Home> {
                   validateDomain: false)) */
   ///Step2:Client
   blockchainInit() async {
-    String esploraUrl = 'https://mutinynet.ltbl.io/api';
+    String esploraUrl = 'https://mutinynet.com/api';
     try {
       blockchain = await bdk.Blockchain.create(
           config: bdk.BlockchainConfig.esplora(
@@ -204,6 +205,25 @@ class _HomeState extends State<Home> {
     setState(() {
       _isPayjoinEnabled = value;
     });
+    // Reset the payjoin state when disabling it.
+    // This is useful to start a new payjoin session by toggling the switch.
+    if (!value) {
+      resetPayjoinSession();
+    }
+  }
+
+  void resetPayjoinSession() {
+    setState(() {
+      reqCtx = null;
+      pjUri = '';
+      v2Session = null;
+    });
+    // Also clean the text controllers to start a new payjoin session
+    pjUriController.clear();
+    psbtController.clear();
+    receiverPsbtController.clear();
+    amountController.clear();
+    recipientAddress.clear();
   }
 
   Future<void> changeV2(bool value) async {
@@ -487,9 +507,10 @@ class _HomeState extends State<Home> {
   Future performSender() async {
     // Build payjoin request with original psbt
     if (reqCtx == null) {
+      final pjUri = await payjoinManager.stringToUri(pjUriController.text);
       final request = await payjoinManager.buildPayjoinRequest(
         wallet,
-        await payjoinManager.stringToUri(pjUriController.text),
+        pjUri,
         feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
       );
       if (isV2) {
@@ -506,13 +527,11 @@ class _HomeState extends State<Home> {
       });
     } // Finalize payjoin
     else {
-      String checkedProposal;
+      String? checkedProposal;
       if (isV2) {
-        final proposalPsbt =
-            await payjoinManager.requestV2PayjoinProposal(reqCtx!);
-        debugPrint('Receiver proposed PSBT: $proposalPsbt');
         checkedProposal =
-            await payjoinManager.processV2Proposal(reqCtx!, proposalPsbt!);
+            await payjoinManager.requestV2PayjoinProposal(reqCtx!);
+        debugPrint('Receiver proposed PSBT: $checkedProposal');
       } else {
         final proposalPsbt = receiverPsbtController.text;
         debugPrint('Receiver proposed PSBT: $proposalPsbt');
@@ -520,11 +539,17 @@ class _HomeState extends State<Home> {
             await payjoinManager.processV1Proposal(reqCtx!, proposalPsbt);
       }
 
-      final transaction =
-          await payjoinManager.extractPjTx(wallet, checkedProposal);
-      final txId = await blockchain.broadcast(transaction: transaction);
-      print('TxId: $txId');
-      showBottomSheet(txId);
+      if (checkedProposal != null) {
+        final transaction =
+            await payjoinManager.extractPjTx(wallet, checkedProposal);
+        final txId = await blockchain.broadcast(transaction: transaction);
+        resetPayjoinSession();
+
+        print('TxId: $txId');
+        showBottomSheet(txId);
+      } else {
+        showBottomSheet('No proposal received yet');
+      }
     }
   }
 
@@ -535,16 +560,27 @@ class _HomeState extends State<Home> {
       await buildReceiverPjUri();
     } // Handle payjoin request and send back the payjoin proposal
     else {
-      if (isV2) {
-        await payjoinManager.handleV2Request(v2Session!, wallet);
-      } else {
-        final proposalPsbt =
-            await payjoinManager.handleV1Request(psbtController.text, wallet);
-        if (proposalPsbt == null) {
-          return throw Exception("Response is null");
-        }
+      try {
+        if (isV2) {
+          await payjoinManager.handleV2Request(v2Session!, wallet);
+          showBottomSheet('Payjoin proposal sent');
+        } else {
+          final proposalPsbt =
+              await payjoinManager.handleV1Request(psbtController.text, wallet);
+          if (proposalPsbt == null) {
+            return throw Exception("Response is null");
+          }
 
-        showBottomSheet(proposalPsbt);
+          showBottomSheet(proposalPsbt);
+        }
+        resetPayjoinSession();
+      } catch (e) {
+        if (e is PayjoinException) {
+          // In a real app you would handle the error better
+          showBottomSheet('PJ error: ${e.message}');
+        } else {
+          debugPrint(e.toString());
+        }
       }
     }
   }
@@ -558,7 +594,7 @@ class _HomeState extends State<Home> {
         amount: amount,
         address: recipientAddress.text,
         network: Network.signet,
-        expireAfter: 30,
+        expireAfter: 3600,
       );
 
       setState(() {

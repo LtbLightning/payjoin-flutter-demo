@@ -336,8 +336,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: session-init-extract-req-fix
-      resolved-ref: e94a26bf55facb79653dc5f7e906be0b5acb7475
+      ref: return-ffi-wrappers
+      resolved-ref: "3a917b0fbffe8a4300cd6ac8441f96e7672cd80c"
       url: "https://github.com/kumulynja/payjoin-flutter"
     source: git
     version: "0.18.0"

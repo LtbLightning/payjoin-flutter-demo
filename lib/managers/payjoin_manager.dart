@@ -46,13 +46,16 @@ class PayjoinManager {
       network: network,
       expireAfter: expireAfter,
     );
-    final pjUriBuilder = session.pjUriBuilder();
     String pjUriStr;
+    final pjUriBuilder = session.pjUriBuilder();
     if (amount != null) {
-      pjUriStr =
-          pjUriBuilder.amount(amount: BigInt.from(amount)).build().asString();
+      final pjUriBuilderWithAmount =
+          pjUriBuilder.amount(amount: BigInt.from(amount));
+      final pjUri = pjUriBuilderWithAmount.build();
+      pjUriStr = pjUri.asString();
     } else {
-      pjUriStr = pjUriBuilder.build().asString();
+      final pjUri = pjUriBuilder.build();
+      pjUriStr = pjUri.asString();
     }
 
     return (pjUriStr, session);
@@ -94,7 +97,7 @@ class PayjoinManager {
       ),
     );
 
-    final psbtBase64 = psbt.jsonSerialize();
+    final psbtBase64 = psbt.asString();
     debugPrint('Original Sender Psbt for request: $psbtBase64');
     return psbtBase64;
   }
@@ -127,10 +130,10 @@ class PayjoinManager {
       },
       body: request.body,
     );
-    final payjoinProposalPsbt =
+    final checkedPayjoinProposalPsbt =
         await ctx.processResponse(response: response.bodyBytes);
 
-    return payjoinProposalPsbt;
+    return checkedPayjoinProposalPsbt;
   }
 
   Future<String?> handleV1Request(
@@ -164,6 +167,9 @@ class PayjoinManager {
     final originalPsbt = await http.post(
       Uri.parse(originalReq.url.asString()),
       body: originalReq.body,
+      headers: {
+        'Content-Type': v2ContentType,
+      },
     );
     final uncheckedProposal = await session.processResponse(
       body: originalPsbt.bodyBytes,
@@ -179,6 +185,9 @@ class PayjoinManager {
     final proposalPsbt = await http.post(
       Uri.parse(proposalReq.url.asString()),
       body: proposalReq.body,
+      headers: {
+        'Content-Type': v2ContentType,
+      },
     );
     await payjoinProposal.processResponse(
         res: proposalPsbt.bodyBytes, ohttpContext: proposalCtx);
@@ -211,7 +220,7 @@ class PayjoinManager {
   Future<bdk.Transaction> extractPjTx(
       bdk.Wallet senderWallet, String psbtString) async {
     final psbt = await bdk.PartiallySignedTransaction.fromString(psbtString);
-    print('PSBT before: ${psbt.jsonSerialize()}');
+    print('PSBT before: ${psbt.asString()}');
     senderWallet.sign(
         psbt: psbt,
         signOptions: const bdk.SignOptions(
@@ -221,7 +230,7 @@ class PayjoinManager {
             tryFinalize: true,
             signWithTapInternalKey: true,
             allowGrinding: false));
-    print('PSBT after: ${psbt.jsonSerialize()}');
+    print('PSBT after: ${psbt.asString()}');
     var transaction = psbt.extractTx();
     return transaction;
   }
@@ -238,7 +247,6 @@ class PayjoinManager {
       payjoinDirectory: payjoinDirectoryUrl,
     );
 
-    final keysString = ohttpKeys.field0.toString();
     final session = await v2.SessionInitializer.create(
       address: address,
       ohttpRelay: ohttpRelayUrl,
@@ -322,7 +330,8 @@ class PayjoinManager {
               .scriptPubkey()
               .bytes);
       final payjoinProposal = await payjoin.finalizeProposal(
-          processPsbt: (i) => _processPsbt(i, receiverWallet));
+        processPsbt: (i) => _processPsbt(i, receiverWallet),
+      );
       return payjoinProposal;
     } on Exception catch (e) {
       debugPrint(e.toString());
@@ -381,15 +390,15 @@ class PayjoinManager {
         outpoint: outpointToContribute,
       );
 
-      payjoin.trySubstituteReceiverOutput(
+      /*payjoin.trySubstituteReceiverOutput(
           generateScript: () async => receiverWallet
               .getAddress(addressIndex: const bdk.AddressIndex.increase())
               .address
               .scriptPubkey()
-              .bytes);
+              .bytes);*/
       final payjoinProposal = await payjoin.finalizeProposal(
           processPsbt: (i) => _processPsbt(i, receiverWallet));
-      return payjoinProposal as v2.PayjoinProposal;
+      return payjoinProposal;
     } on Exception catch (e) {
       debugPrint(e.toString());
       rethrow;
@@ -403,7 +412,7 @@ class PayjoinManager {
 
   Future<String> _processPsbt(String preProcessed, bdk.Wallet wallet) async {
     final psbt = await bdk.PartiallySignedTransaction.fromString(preProcessed);
-    print('PSBT before: ${psbt.jsonSerialize()}');
+    print('PSBT before: ${psbt.asString()}');
     await wallet.sign(
       psbt: psbt,
       signOptions: const bdk.SignOptions(
@@ -415,7 +424,7 @@ class PayjoinManager {
         allowGrinding: false,
       ),
     );
-    print('PSBT after: ${psbt.jsonSerialize()}');
-    return psbt.jsonSerialize();
+    print('PSBT after: ${psbt.asString()}');
+    return psbt.asString();
   }
 }

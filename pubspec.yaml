@@ -16,7 +16,7 @@ dependencies:
   payjoin_flutter:
     git:
       url: https://github.com/kumulynja/payjoin-flutter
-      ref: session-init-extract-req-fix
+      ref: return-ffi-wrappers
 dev_dependencies:
   flutter_lints: ^2.0.0
   flutter_test:
