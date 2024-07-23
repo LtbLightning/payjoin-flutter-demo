@@ -336,9 +336,9 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: return-ffi-wrappers
-      resolved-ref: "3a917b0fbffe8a4300cd6ac8441f96e7672cd80c"
-      url: "https://github.com/kumulynja/payjoin-flutter"
+      ref: main
+      resolved-ref: "0d89b4d64ce22663df447d192bc73849dd74e50f"
+      url: "https://github.com/LtbLightning/payjoin-flutter"
     source: git
     version: "0.18.0"
   pub_semver:

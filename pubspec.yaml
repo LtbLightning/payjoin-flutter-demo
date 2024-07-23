@@ -15,8 +15,8 @@ dependencies:
   http: ^1.2.1
   payjoin_flutter:
     git:
-      url: https://github.com/kumulynja/payjoin-flutter
-      ref: return-ffi-wrappers
+      url: https://github.com/LtbLightning/payjoin-flutter
+      ref: main
 dev_dependencies:
   flutter_lints: ^2.0.0
   flutter_test:
