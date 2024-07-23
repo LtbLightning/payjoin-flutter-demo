@@ -1,11 +1,10 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:bdk_flutter/bdk_flutter.dart';
+import 'package:bdk_flutter/bdk_flutter.dart' as bdk;
 import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/common.dart';
+import 'package:payjoin_flutter/receive/v2.dart' as v2;
 import 'package:payjoin_flutter/send.dart';
 import '../widgets/widgets.dart';
 
@@ -17,8 +16,8 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  late Wallet wallet;
-  late Blockchain blockchain;
+  late bdk.Wallet wallet;
+  late bdk.Blockchain blockchain;
   String? displayText;
   String? address;
   String balance = "0";
@@ -30,14 +29,17 @@ class _HomeState extends State<Home> {
   TextEditingController receiverPsbtController = TextEditingController();
   bool _isPayjoinEnabled = false;
   bool isReceiver = false;
+  bool isV2 = true;
+  v2.ActiveSession? v2Session;
+  RequestContext? reqCtx;
+  v2.UncheckedProposal? uncheckedProposal;
+  v2.PayjoinProposal? payjoinProposal;
   FeeRangeEnum? feeRange;
   PayjoinManager payjoinManager = PayjoinManager();
   String pjUri = '';
-  bool isRequestSent = false;
-  ContextV1? contextV1;
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
-      ? isRequestSent
+      ? reqCtx != null
           ? "Finalize Payjoin"
           : isReceiver
               ? pjUri.isNotEmpty
@@ -47,7 +49,8 @@ class _HomeState extends State<Home> {
       : "Send Bit";
 
   Future<void> generateMnemonicHandler() async {
-    var res = await (await Mnemonic.create(WordCount.words12)).asString();
+    var res =
+        await (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
 
     setState(() {
       mnemonic.text = res;
@@ -55,18 +58,21 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<List<Descriptor>> getDescriptors(String mnemonicStr) async {
-    final descriptors = <Descriptor>[];
+  Future<List<bdk.Descriptor>> getDescriptors(String mnemonicStr) async {
+    final descriptors = <bdk.Descriptor>[];
     try {
-      for (var e in [KeychainKind.externalChain, KeychainKind.internalChain]) {
-        final mnemonic = await Mnemonic.fromString(mnemonicStr);
-        final descriptorSecretKey = await DescriptorSecretKey.create(
-          network: Network.signet,
+      for (var e in [
+        bdk.KeychainKind.externalChain,
+        bdk.KeychainKind.internalChain
+      ]) {
+        final mnemonic = await bdk.Mnemonic.fromString(mnemonicStr);
+        final descriptorSecretKey = await bdk.DescriptorSecretKey.create(
+          network: bdk.Network.signet,
           mnemonic: mnemonic,
         );
-        final descriptor = await Descriptor.newBip86(
+        final descriptor = await bdk.Descriptor.newBip86(
             secretKey: descriptorSecretKey,
-            network: Network.signet,
+            network: bdk.Network.signet,
             keychain: e);
         descriptors.add(descriptor);
       }
@@ -81,18 +87,18 @@ class _HomeState extends State<Home> {
 
   createOrRestoreWallet(
     String mnemonic,
-    Network network,
+    bdk.Network network,
     String? password,
     String path, //TODO: Derived error: Address contains key path
   ) async {
     try {
       final descriptors = await getDescriptors(mnemonic);
       await blockchainInit();
-      final res = await Wallet.create(
+      final res = await bdk.Wallet.create(
           descriptor: descriptors[0],
           changeDescriptor: descriptors[1],
           network: network,
-          databaseConfig: const DatabaseConfig.memory());
+          databaseConfig: const bdk.DatabaseConfig.memory());
       setState(() {
         wallet = res;
       });
@@ -109,7 +115,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> getBalance() async {
-    final balanceObj = await wallet.getBalance();
+    final balanceObj = wallet.getBalance();
     final res = "Total Balance: ${balanceObj.total.toString()}";
     if (kDebugMode) {
       print(res);
@@ -120,9 +126,9 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<AddressInfo> getNewAddress() async {
-    final res =
-        await wallet.getAddress(addressIndex: const AddressIndex.increase());
+  Future<bdk.AddressInfo> getNewAddress() async {
+    final res = await wallet.getAddress(
+        addressIndex: const bdk.AddressIndex.increase());
     if (kDebugMode) {
       print(res.address);
     }
@@ -138,19 +144,19 @@ class _HomeState extends State<Home> {
 
   Future<void> sendTx(String addressStr, int amount) async {
     try {
-      final txBuilder = TxBuilder();
-      final address =
-          await Address.fromString(s: addressStr, network: Network.signet);
+      final txBuilder = bdk.TxBuilder();
+      final address = await bdk.Address.fromString(
+          s: addressStr, network: bdk.Network.signet);
       final script = await address.scriptPubkey();
 
       final psbt = await txBuilder
-          .addRecipient(script, amount)
+          .addRecipient(script, BigInt.from(amount))
           .feeRate(1.0)
           .finish(wallet);
 
       final isFinalized = await wallet.sign(psbt: psbt.$1);
       if (isFinalized) {
-        final tx = await psbt.$1.extractTx();
+        final tx = psbt.$1.extractTx();
         final res = await blockchain.broadcast(transaction: tx);
         debugPrint(res);
       } else {
@@ -176,11 +182,12 @@ class _HomeState extends State<Home> {
                   validateDomain: false)) */
   ///Step2:Client
   blockchainInit() async {
-    String esploraUrl = 'https://mutinynet.ltbl.io/api';
+    String esploraUrl = 'https://mutinynet.com/api';
     try {
-      blockchain = await Blockchain.create(
-          config: BlockchainConfig.esplora(
-              config: EsploraConfig(baseUrl: esploraUrl, stopGap: 10)));
+      blockchain = await bdk.Blockchain.create(
+          config: bdk.BlockchainConfig.esplora(
+              config: bdk.EsploraConfig(
+                  baseUrl: esploraUrl, stopGap: BigInt.from(10))));
     } on Exception catch (e) {
       setState(() {
         displayText = "Error: ${e.toString()}";
@@ -196,6 +203,17 @@ class _HomeState extends State<Home> {
   Future<void> changePayjoin(bool value) async {
     setState(() {
       _isPayjoinEnabled = value;
+    });
+    // Reset the payjoin state when disabling it.
+    // This is useful to start a new payjoin session by toggling the switch.
+    if (!value) {
+      resetPayjoinSession();
+    }
+  }
+
+  Future<void> changeV2(bool value) async {
+    setState(() {
+      isV2 = value;
     });
   }
 
@@ -256,7 +274,7 @@ class _HomeState extends State<Home> {
                       text: "Create Wallet",
                       callback: () async {
                         await createOrRestoreWallet(mnemonic.text,
-                            Network.signet, "password", "m/84'/1'/0'");
+                            bdk.Network.signet, "password", "m/84'/1'/0'");
                       },
                     ),
                     SubmitButton(
@@ -285,14 +303,34 @@ class _HomeState extends State<Home> {
                         onChanged: changePayjoin,
                       ),
                       _isPayjoinEnabled ? buildPayjoinFields() : buildFields(),
-                      SubmitButton(
-                        text: getSubmitButtonTitle,
-                        callback: () async {
-                          _isPayjoinEnabled
-                              ? performPayjoin(formKey)
-                              : await onSendBit(formKey);
-                        },
-                      )
+                      v2Session == null && reqCtx == null
+                          ? SubmitButton(
+                              text: getSubmitButtonTitle,
+                              callback: () async {
+                                _isPayjoinEnabled
+                                    ? performPayjoin(formKey)
+                                    : await onSendBit(formKey);
+                              },
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const CircularProgressIndicator(),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Text(
+                                    v2Session != null
+                                        ? payjoinProposal != null
+                                            ? 'Proposal sent, waiting for tx...'
+                                            : uncheckedProposal != null
+                                                ? 'Received request, adding inputs to proposal...'
+                                                : 'Session initiated, waiting for request...'
+                                        : 'Request sent, waiting for proposal to finalize tx...',
+                                  ),
+                                ),
+                              ],
+                            ),
                     ]),
               ))
             ],
@@ -375,9 +413,15 @@ class _HomeState extends State<Home> {
     return Column(
       children: [
         CustomSwitchTile(
-            title: isReceiver ? "Receiver" : "Sender",
-            value: isReceiver,
-            onChanged: changeFrom),
+          title: isV2 ? "v2" : "v1",
+          value: isV2,
+          onChanged: changeV2,
+        ),
+        CustomSwitchTile(
+          title: isReceiver ? "Receiver" : "Sender",
+          value: isReceiver,
+          onChanged: changeFrom,
+        ),
         if (isReceiver) ...[
           buildReceiverFields(),
         ] else
@@ -387,25 +431,7 @@ class _HomeState extends State<Home> {
   }
 
   List<Widget> buildSenderFields() {
-    if (isRequestSent) {
-      return [
-        TextFieldContainer(
-          child: TextFormField(
-            controller: receiverPsbtController,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Please enter the receiver psbt';
-              }
-              return null;
-            },
-            style: Theme.of(context).textTheme.bodyLarge,
-            keyboardType: TextInputType.multiline,
-            maxLines: 5,
-            decoration: const InputDecoration(hintText: "Enter receiver psbt"),
-          ),
-        )
-      ];
-    } else {
+    if (reqCtx == null) {
       return [
         TextFieldContainer(
           child: TextFormField(
@@ -431,21 +457,45 @@ class _HomeState extends State<Home> {
           ),
         ),
       ];
+    } else {
+      if (!isV2) {
+        return [
+          TextFieldContainer(
+            child: TextFormField(
+              controller: receiverPsbtController,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter the receiver psbt';
+                }
+                return null;
+              },
+              style: Theme.of(context).textTheme.bodyLarge,
+              keyboardType: TextInputType.multiline,
+              maxLines: 5,
+              decoration:
+                  const InputDecoration(hintText: "Enter receiver psbt"),
+            ),
+          )
+        ];
+      }
+      return [];
     }
   }
 
   Widget buildReceiverFields() {
     return pjUri.isEmpty
         ? buildFields()
-        : TextFieldContainer(
-            child: TextFormField(
-              controller: psbtController,
-              style: Theme.of(context).textTheme.bodyLarge,
-              keyboardType: TextInputType.multiline,
-              maxLines: 5,
-              decoration: const InputDecoration(hintText: "Enter psbt"),
-            ),
-          );
+        : isV2
+            ? Container()
+            : TextFieldContainer(
+                child: TextFormField(
+                  controller: psbtController,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  keyboardType: TextInputType.multiline,
+                  maxLines: 5,
+                  decoration: const InputDecoration(hintText: "Enter psbt"),
+                ),
+              );
   }
 
   Future performPayjoin(formKey) async {
@@ -460,59 +510,208 @@ class _HomeState extends State<Home> {
 
   //Sender
   Future performSender() async {
-    if (!isRequestSent) {
-      final (request, ctx) = await payjoinManager.buildPayjoinRequest(
-          wallet,
-          await payjoinManager.stringToUri(pjUriController.text),
-          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue);
-      final originalPsbt = utf8.decode(request.body.toList());
-      debugPrint('Original Sender PSBT: $originalPsbt');
-      showBottomSheet(originalPsbt);
-
+    if (isV2) {
+      // Build payjoin request with original psbt and send it to the
+      //  payjoin directory where the receiver can poll it
+      final pjUri = await payjoinManager.stringToUri(pjUriController.text);
+      final originalPsbt = await payjoinManager.buildOriginalPsbt(
+        wallet,
+        pjUri,
+        feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+      );
+      final request = await payjoinManager.buildPayjoinRequest(
+        originalPsbt,
+        pjUri,
+        feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+      );
       setState(() {
-        isRequestSent =
-            true; // Todo: this is not needed since we can check for contextV1 not being null
-        contextV1 = ctx;
+        reqCtx = request;
       });
-    } // Finalize payjoin
-    else {
-      String receiverPsbt = receiverPsbtController.text;
-      debugPrint('Receiver PSBT: $receiverPsbt');
-      final processedResponse =
-          await contextV1!.processResponse(response: utf8.encode(receiverPsbt));
-      debugPrint('Processed Response: $processedResponse');
-      final transaction =
-          await payjoinManager.extractPjTx(wallet, processedResponse);
+
+      // Request and keep polling the payjoin directoy for the proposal
+      //  from the receiver
+      String psbt = originalPsbt;
+      try {
+        psbt = await payjoinManager.requestAndPollV2Proposal(
+          reqCtx!,
+        );
+        debugPrint('Receiver proposed payjoin PSBT: $psbt');
+      } catch (e) {
+        // No proposal received, make a normal tx with the original psbt
+        debugPrint('No proposal received, broadcasting original tx');
+      }
+
+      // If a proposal is received, finalize the payjoin
+      final transaction = await payjoinManager.extractPjTx(wallet, psbt);
       final txId = await blockchain.broadcast(transaction: transaction);
-      print('TxId: $txId');
-      showBottomSheet(txId);
+      debugPrint('Broacasted tx: $txId');
+      resetPayjoinSession();
+
+      showBottomSheet(
+        '${psbt == originalPsbt ? 'Original tx with id' : 'Payjoin tx with id'} '
+        '$txId broadcasted!',
+      );
+    } else {
+      // Build V1 payjoin request with original psbt
+      if (reqCtx == null) {
+        final pjUri = await payjoinManager.stringToUri(pjUriController.text);
+        final originalPsbt = await payjoinManager.buildOriginalPsbt(
+          wallet,
+          pjUri,
+          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+        );
+        final request = await payjoinManager.buildPayjoinRequest(
+          originalPsbt,
+          pjUri,
+          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+        );
+        debugPrint('Original Sender PSBT: $originalPsbt');
+
+        setState(() {
+          reqCtx = request;
+        });
+        showBottomSheet(originalPsbt);
+      } else {
+        // Finalize payjoin
+        final proposalPsbt = receiverPsbtController.text;
+        debugPrint('Receiver proposed PSBT: $proposalPsbt');
+        final checkedProposal =
+            await payjoinManager.processV1Proposal(reqCtx!, proposalPsbt);
+
+        final transaction =
+            await payjoinManager.extractPjTx(wallet, checkedProposal);
+        final txId = await blockchain.broadcast(transaction: transaction);
+        debugPrint('TxId: $txId');
+        resetPayjoinSession();
+
+        showBottomSheet(txId);
+      }
     }
   }
 
   //Receiver
   Future performReceiver() async {
-    if (pjUri.isEmpty) {
-      buildReceiverPjUri();
-    } else {
-      final receiverPsbt =
-          await payjoinManager.handlePjRequest(psbtController.text, wallet);
-      if (receiverPsbt == null) {
-        return throw Exception("Response is null");
-      }
+    // Create a new payjoin uri (and session if v2)
+    try {
+      if (isV2) {
+        // Start a payjoin session and create a new payjoin uri
+        await initReceiverSession();
 
-      showBottomSheet(receiverPsbt);
+        // Poll for requests made by the sender to this payjoin uri
+        final requestProposal = await payjoinManager.pollV2Request(v2Session!);
+        setState(() {
+          uncheckedProposal = requestProposal;
+        });
+
+        // Handle the request and send back the payjoin proposal
+        final (originalTx, proposedPayjoin) =
+            await payjoinManager.handleV2Request(requestProposal, wallet);
+        setState(() {
+          payjoinProposal = proposedPayjoin;
+        });
+        // Wait some time for the tx to be broadcasted
+        await Future.delayed(const Duration(seconds: 3));
+
+        // Wait for the original or payjoin tx to be broadcasted
+        final proposalTxId =
+            await payjoinManager.getTxIdFromPsbt(await proposedPayjoin.psbt());
+        final receivedTxId = await waitForTransaction(
+          originalTxId: await originalTx.txid(),
+          proposalTxId: proposalTxId,
+        );
+        resetPayjoinSession();
+
+        showBottomSheet(
+          '${receivedTxId == proposalTxId ? 'Payjoin' : 'Original'} tx received!',
+        );
+      } else {
+        if (pjUri.isEmpty) {
+          await initReceiverSession();
+        } else {
+          // Handle payjoin request and send back the payjoin proposal
+          final proposalPsbt =
+              await payjoinManager.handleV1Request(psbtController.text, wallet);
+          if (proposalPsbt == null) {
+            return throw Exception("Response is null");
+          }
+          resetPayjoinSession();
+          showBottomSheet(proposalPsbt);
+        }
+      }
+    } catch (e) {
+      debugPrint(e.toString());
+      if (e is PayjoinException) {
+        // In a real app you would handle the error better
+        debugPrint(e.toString());
+        showBottomSheet('PJ error: ${e.message}');
+        resetPayjoinSession();
+      }
     }
   }
 
-  Future<void> buildReceiverPjUri() async {
-    String pjStr = await payjoinManager.buildPjStr(
-      double.parse(amountController.text),
-      recipientAddress.text,
-    );
+  Future<void> initReceiverSession() async {
+    String pjStr;
+    final amount = int.parse(amountController.text);
+    if (isV2) {
+      v2.ActiveSession session;
+      (pjStr, session) = await payjoinManager.buildV2PjStr(
+        amount: amount,
+        address: recipientAddress.text,
+        network: Network.signet,
+        expireAfter: 60 * 5, // 5 minutes
+      );
+
+      setState(() {
+        v2Session = session;
+      });
+    } else {
+      pjStr = await payjoinManager.buildV1PjStr(
+        amount,
+        recipientAddress.text,
+      );
+    }
 
     setState(() {
       displayText = pjStr;
       pjUri = pjStr;
     });
+  }
+
+  Future<String> waitForTransaction({
+    required String originalTxId,
+    required String proposalTxId,
+  }) async {
+    debugPrint('Waiting for payjoin tx to be sent...');
+    await syncWallet();
+    final txs = wallet.listTransactions(includeRaw: false);
+    try {
+      final tx = txs.firstWhere(
+          (tx) => tx.txid == originalTxId || tx.txid == proposalTxId);
+      debugPrint('Tx found: ${tx.txid}');
+      return tx.txid;
+    } catch (e) {
+      debugPrint('Tx not found, retrying after 3 seconds...');
+      await Future.delayed(const Duration(seconds: 3));
+      return waitForTransaction(
+        originalTxId: originalTxId,
+        proposalTxId: proposalTxId,
+      );
+    }
+  }
+
+  void resetPayjoinSession() {
+    setState(() {
+      pjUri = '';
+      v2Session = null;
+      reqCtx = null;
+      uncheckedProposal = null;
+      payjoinProposal = null;
+    });
+    // Also clean the text controllers to start a new payjoin session
+    recipientAddress.clear();
+    amountController.clear();
+    pjUriController.clear();
+    receiverPsbtController.clear();
+    psbtController.clear();
   }
 }

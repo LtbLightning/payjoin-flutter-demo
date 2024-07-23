@@ -1,11 +1,11 @@
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:typed_data';
 
-import 'package:bdk_flutter/bdk_flutter.dart';
+import 'package:bdk_flutter/bdk_flutter.dart' as bdk;
 import 'package:flutter/widgets.dart';
+import 'package:http/http.dart' as http;
 import 'package:payjoin_flutter/receive/v1.dart' as v1;
-import 'package:payjoin_flutter/receive/v1.dart';
+import 'package:payjoin_flutter/receive/v2.dart' as v2;
 // ignore: implementation_imports
 import 'package:payjoin_flutter/src/generated/utils/types.dart' as types;
 import 'package:payjoin_flutter/common.dart';
@@ -14,17 +14,51 @@ import 'package:payjoin_flutter/send.dart' as send;
 
 class PayjoinManager {
   static const pjUrl = "https://localhost:8088";
+  static const ohttpRelay = "https://pj.bobspacebkk.com";
+  static const payjoinDirectory = "https://payjo.in";
+  static const v1ContentType = "text/plain";
+  static const v2ContentType = "message/ohttp-req";
 
-  Future<String> buildPjStr(double amount, String address, {String? pj}) async {
+  Future<String> buildV1PjStr(
+    int amount,
+    String address, {
+    String? pj,
+  }) async {
     try {
       final pjUri =
-          "bitcoin:$address?amount=${amount / 100000000.0}&pj=${pj ?? pjUrl}";
+          "bitcoin:$address?amount=${amount / 100000000}&pj=${pj ?? pjUrl}";
       debugPrint("pjUri: : $pjUri");
       return pjUri;
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
     }
+  }
+
+  Future<(String, v2.ActiveSession)> buildV2PjStr({
+    int? amount,
+    required String address,
+    required Network network,
+    required int expireAfter,
+  }) async {
+    final session = await _startV2ReceiveSession(
+      address: address,
+      network: network,
+      expireAfter: expireAfter,
+    );
+    String pjUriStr;
+    final pjUriBuilder = session.pjUriBuilder();
+    if (amount != null) {
+      final pjUriBuilderWithAmount =
+          pjUriBuilder.amount(amount: BigInt.from(amount));
+      final pjUri = pjUriBuilderWithAmount.build();
+      pjUriStr = pjUri.asString();
+    } else {
+      final pjUri = pjUriBuilder.build();
+      pjUriStr = pjUri.asString();
+    }
+
+    return (pjUriStr, session);
   }
 
   Future<pj_uri.Uri> stringToUri(String pj) async {
@@ -36,22 +70,24 @@ class PayjoinManager {
     }
   }
 
-  //Sender psbt
-  Future<(Request, send.ContextV1)> buildPayjoinRequest(
-      Wallet senderWallet, pj_uri.Uri pjUri, int fee) async {
-    final txBuilder = TxBuilder();
-    final address = await Address.fromString(
-        s: await pjUri.address(), network: Network.signet);
-    final script = await address.scriptPubkey();
-    double uriAmount = await pjUri.amount() ?? 0;
+  Future<String> buildOriginalPsbt(
+    bdk.Wallet senderWallet,
+    pj_uri.Uri pjUri,
+    int fee,
+  ) async {
+    final txBuilder = bdk.TxBuilder();
+    final address = await bdk.Address.fromString(
+        s: pjUri.address(), network: bdk.Network.signet);
+    final script = address.scriptPubkey();
+    double uriAmount = pjUri.amount() ?? 0;
     int amountSat = (uriAmount * 100000000.0).round();
     final (psbt, _) = await txBuilder
-        .addRecipient(script, amountSat)
-        .feeAbsolute(fee)
+        .addRecipient(script, BigInt.from(amountSat))
+        .feeAbsolute(BigInt.from(fee))
         .finish(senderWallet);
     await senderWallet.sign(
       psbt: psbt,
-      signOptions: const SignOptions(
+      signOptions: const bdk.SignOptions(
         trustWitnessUtxo: true,
         allowAllSighashes: false,
         removePartialSigs: true,
@@ -61,17 +97,70 @@ class PayjoinManager {
       ),
     );
 
-    final psbtBase64 = await psbt.serialize();
+    final psbtBase64 = psbt.asString();
     debugPrint('Original Sender Psbt for request: $psbtBase64');
-
-    final requestBuilder = await send.RequestBuilder.fromPsbtAndUri(
-        psbtBase64: psbtBase64, uri: pjUri);
-    final requestContext = await requestBuilder.buildRecommended(minFeeRate: 1);
-
-    return requestContext.extractContextV1();
+    return psbtBase64;
   }
 
-  Future<String?> handlePjRequest(String psbtBase64, receiverWallet) async {
+  Future<send.RequestContext> buildPayjoinRequest(
+    String originalPsbt,
+    pj_uri.Uri pjUri,
+    int fee,
+  ) async {
+    final requestBuilder = await send.RequestBuilder.fromPsbtAndUri(
+        psbtBase64: originalPsbt, pjUri: pjUri.checkPjSupported());
+    final requestContext =
+        await requestBuilder.buildRecommended(minFeeRate: BigInt.from(1));
+
+    return requestContext;
+  }
+
+  Future<String> requestAndPollV2Proposal(
+    send.RequestContext requestContext,
+  ) async {
+    while (true) {
+      debugPrint('Polling for V2 Proposal...');
+      try {
+        // Extract the request and context, keep repeating this too instead of
+        //  only the post to get the timeout error
+        final (request, ctx) = await requestContext.extractContextV2(
+          await pj_uri.Url.fromString(payjoinDirectory),
+        );
+
+        // Post the request to the server
+        final response = await http.post(
+          Uri.parse(request.url.asString()),
+          headers: {
+            'Content-Type': v2ContentType,
+          },
+          body: request.body,
+        );
+
+        // Process the server response
+        final checkedPayjoinProposal =
+            await ctx.processResponse(response: response.bodyBytes);
+
+        // If a valid proposal is received, return it
+        if (checkedPayjoinProposal != null) {
+          debugPrint('Received V2 proposal: $checkedPayjoinProposal');
+          return checkedPayjoinProposal;
+        }
+
+        debugPrint('No valid proposal received, retrying after 2 seconds...');
+
+        // Add a delay to avoid spamming the server with requests
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        // If the session times out or another error occurs, rethrow the error
+        rethrow;
+      }
+    }
+  }
+
+  Future<String?> handleV1Request(
+    String psbtBase64,
+    bdk.Wallet receiverWallet,
+  ) async {
     // Normally the request with the original psbt as body, a query and headers is received
     //  by listening to a server, but we only pass the original psbt here and
     //  add the headers and a mock query ourselves.
@@ -81,44 +170,174 @@ class PayjoinManager {
       'content-type': 'text/plain',
       'content-length': body.length.toString(),
     };
-    final uncheckedProposal = await UncheckedProposal.fromRequest(
+    final uncheckedProposal = await v1.UncheckedProposal.fromRequest(
       body: body.toList(),
       query: '',
       headers: Headers(map: headersMap),
     );
 
-    final proposal = await handleProposal(
+    final proposal = await _handleV1Proposal(
         proposal: uncheckedProposal, receiverWallet: receiverWallet);
 
     return proposal.psbt();
   }
 
-  Future<bool> isOwned(Uint8List bytes, Wallet wallet) async {
-    final script = ScriptBuf(bytes: bytes);
-    return await wallet.isMine(script: script);
+  Future<v2.UncheckedProposal> pollV2Request(
+    v2.ActiveSession session,
+  ) async {
+    while (true) {
+      debugPrint('Polling for V2 Request...');
+      try {
+        // Extract the request and context, keep repeating this too instead of
+        //  only the post to get the timeout error
+        final (originalReq, originalCtx) = await session.extractRequest();
+
+        // Post the request to the server
+        final originalPsbt = await http.post(
+          Uri.parse(originalReq.url.asString()),
+          body: originalReq.body,
+          headers: {
+            'Content-Type': v2ContentType,
+          },
+        );
+
+        // Process the server response
+        final uncheckedProposal = await session.processResponse(
+          body: originalPsbt.bodyBytes,
+          clientResponse: originalCtx,
+        );
+
+        // If a valid unchecked proposal is received, return it
+        if (uncheckedProposal != null) {
+          debugPrint('Received V2 request: $uncheckedProposal');
+          return uncheckedProposal;
+        }
+
+        debugPrint('No valid proposal received, retrying after 2 seconds...');
+
+        // Add a delay to avoid spamming the server with requests
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        // If the session times out or another error occurs, rethrow the error
+        rethrow;
+      }
+    }
   }
 
-  Future<String> processPsbt(String preProcessed, Wallet wallet) async {
-    final psbt = await PartiallySignedTransaction.fromString(preProcessed);
-    print('PSBT before: ${await psbt.serialize()}');
-    await wallet.sign(
-      psbt: psbt,
-      signOptions: const SignOptions(
-        trustWitnessUtxo: true,
-        allowAllSighashes: false,
-        removePartialSigs: true,
-        tryFinalize: true,
-        signWithTapInternalKey: true,
-        allowGrinding: false,
-      ),
+  Future<(bdk.Transaction originalTx, v2.PayjoinProposal)> handleV2Request(
+    v2.UncheckedProposal uncheckedProposal,
+    bdk.Wallet receiverWallet,
+  ) async {
+    final (originalTx, payjoinProposal) = await _handleV2Request(
+      proposal: uncheckedProposal,
+      receiverWallet: receiverWallet,
     );
-    print('PSBT after: ${await psbt.serialize()}');
-    return psbt.serialize();
+    final (proposalReq, proposalCtx) = await payjoinProposal.extractV2Request();
+    final res = await http.post(
+      Uri.parse(proposalReq.url.asString()),
+      body: proposalReq.body,
+      headers: {
+        'Content-Type': v2ContentType,
+      },
+    );
+    await payjoinProposal.processResponse(
+      res: res.bodyBytes,
+      ohttpContext: proposalCtx,
+    );
+
+    return (originalTx, payjoinProposal);
   }
 
-  Future<v1.PayjoinProposal> handleProposal({
+  Future<String> getTxIdFromPsbt(
+    String psbtBase64,
+  ) async {
+    final psbt = await bdk.PartiallySignedTransaction.fromString(psbtBase64);
+    final txId = psbt.extractTx().txid();
+    return txId;
+  }
+
+  Future<String> processV1Proposal(
+    send.RequestContext reqCtx,
+    String proposalPsbt,
+  ) async {
+    final (_, ctx) = await reqCtx.extractContextV1();
+    final checkedProposal =
+        await ctx.processResponse(response: utf8.encode(proposalPsbt));
+    debugPrint('Processed Response: $checkedProposal');
+    return checkedProposal;
+  }
+
+  Future<String> processV2Proposal(
+    send.RequestContext reqCtx,
+    String proposalPsbt,
+  ) async {
+    final (_, ctx) = await reqCtx.extractContextV2(
+      await pj_uri.Url.fromString(payjoinDirectory),
+    );
+    final checkedProposal =
+        await ctx.processResponse(response: utf8.encode(proposalPsbt));
+    debugPrint('Processed Response: $checkedProposal');
+    return checkedProposal!; // Since this is called after the original request, the response should not be null
+  }
+
+  Future<bdk.Transaction> extractPjTx(
+      bdk.Wallet senderWallet, String psbtString) async {
+    final psbt = await bdk.PartiallySignedTransaction.fromString(psbtString);
+    print('PSBT before: ${psbt.asString()}');
+    senderWallet.sign(
+        psbt: psbt,
+        signOptions: const bdk.SignOptions(
+            trustWitnessUtxo: true,
+            allowAllSighashes: false,
+            removePartialSigs: true,
+            tryFinalize: true,
+            signWithTapInternalKey: true,
+            allowGrinding: false));
+    print('PSBT after: ${psbt.asString()}');
+    var transaction = psbt.extractTx();
+    return transaction;
+  }
+
+  Future<v2.ActiveSession> _startV2ReceiveSession({
+    required String address,
+    required Network network,
+    required int expireAfter,
+  }) async {
+    final ohttpRelayUrl = await pj_uri.Url.fromString(ohttpRelay);
+    final payjoinDirectoryUrl = await pj_uri.Url.fromString(payjoinDirectory);
+    pj_uri.OhttpKeys ohttpKeys = await pj_uri.fetchOhttpKeys(
+      ohttpRelay: ohttpRelayUrl,
+      payjoinDirectory: payjoinDirectoryUrl,
+    );
+
+    final session = await v2.SessionInitializer.create(
+      address: address,
+      ohttpRelay: ohttpRelayUrl,
+      directory: payjoinDirectoryUrl,
+      ohttpKeys: ohttpKeys,
+      network: Network.signet,
+      expireAfter: BigInt.from(expireAfter),
+    );
+
+    final (req, ctx) = await session.extractRequest();
+    final response = await http.post(
+      Uri.parse(req.url.asString()),
+      body: req.body,
+      headers: {
+        'Content-Type': v2ContentType,
+      },
+    );
+    final activeSession = await session.processResponse(
+      body: response.bodyBytes,
+      clientResponse: ctx,
+    );
+
+    return activeSession;
+  }
+
+  Future<v1.PayjoinProposal> _handleV1Proposal({
     required v1.UncheckedProposal proposal,
-    required Wallet receiverWallet,
+    required bdk.Wallet receiverWallet,
   }) async {
     try {
       final _ = await proposal.extractTxToScheduleBroadcast();
@@ -127,18 +346,18 @@ class PayjoinManager {
         return true;
       });
       final mixedInputScripts = await ownedInputs.checkInputsNotOwned(
-          isOwned: (i) => isOwned(i, receiverWallet));
+          isOwned: (i) => _isOwned(i, receiverWallet));
       final seenInputs = await mixedInputScripts.checkNoMixedInputScripts();
       final payjoin =
           await (await seenInputs.checkNoInputsSeenBefore(isKnown: (e) async {
         return false;
       }))
               .identifyReceiverOutputs(
-        isReceiverOutput: (i) => isOwned(i, receiverWallet),
+        isReceiverOutput: (i) => _isOwned(i, receiverWallet),
       );
 
-      final availableInputs = await receiverWallet.listUnspent();
-      Map<int, types.OutPoint> candidateInputs = {
+      final availableInputs = receiverWallet.listUnspent();
+      Map<BigInt, types.OutPoint> candidateInputs = {
         for (var input in availableInputs)
           input.txout.value: types.OutPoint(
             txid: input.outpoint.txid.toString(),
@@ -166,13 +385,16 @@ class PayjoinManager {
         txo: txoToContribute,
         outpoint: outpointToContribute,
       );
-      final newReceiverAddress = await ((await receiverWallet.getAddress(
-                  addressIndex: const AddressIndex.increase()))
-              .address)
-          .asString();
-      payjoin.substituteOutputAddress(address: newReceiverAddress);
+
+      payjoin.trySubstituteReceiverOutput(
+          generateScript: () async => receiverWallet
+              .getAddress(addressIndex: const bdk.AddressIndex.increase())
+              .address
+              .scriptPubkey()
+              .bytes);
       final payjoinProposal = await payjoin.finalizeProposal(
-          processPsbt: (i) => processPsbt(i, receiverWallet));
+        processPsbt: (i) => _processPsbt(i, receiverWallet),
+      );
       return payjoinProposal;
     } on Exception catch (e) {
       debugPrint(e.toString());
@@ -180,21 +402,96 @@ class PayjoinManager {
     }
   }
 
-  Future<Transaction> extractPjTx(
-      Wallet senderWallet, String psbtString) async {
-    final psbt = await PartiallySignedTransaction.fromString(psbtString);
-    print('PSBT before: ${await psbt.serialize()}');
-    senderWallet.sign(
-        psbt: psbt,
-        signOptions: const SignOptions(
-            trustWitnessUtxo: true,
-            allowAllSighashes: false,
-            removePartialSigs: true,
-            tryFinalize: true,
-            signWithTapInternalKey: true,
-            allowGrinding: false));
-    print('PSBT after: ${await psbt.serialize()}');
-    var transaction = await psbt.extractTx();
-    return transaction;
+  Future<(bdk.Transaction originalTx, v2.PayjoinProposal)> _handleV2Request({
+    required v2.UncheckedProposal proposal,
+    required bdk.Wallet receiverWallet,
+  }) async {
+    try {
+      final originalTxBytes = await proposal.extractTxToScheduleBroadcast();
+      final originalTx =
+          await bdk.Transaction.fromBytes(transactionBytes: originalTxBytes);
+
+      final ownedInputs =
+          await proposal.checkBroadcastSuitability(canBroadcast: (e) async {
+        return true;
+      });
+      final mixedInputScripts = await ownedInputs.checkInputsNotOwned(
+          isOwned: (i) => _isOwned(i, receiverWallet));
+      final seenInputs = await mixedInputScripts.checkNoMixedInputScripts();
+      final payjoin =
+          await (await seenInputs.checkNoInputsSeenBefore(isKnown: (e) async {
+        return false;
+      }))
+              .identifyReceiverOutputs(
+        isReceiverOutput: (i) => _isOwned(i, receiverWallet),
+      );
+
+      final availableInputs = receiverWallet.listUnspent();
+      Map<BigInt, types.OutPoint> candidateInputs = {
+        for (var input in availableInputs)
+          input.txout.value: types.OutPoint(
+            txid: input.outpoint.txid.toString(),
+            vout: input.outpoint.vout,
+          )
+      };
+      final selectedOutpoint = await payjoin.tryPreservingPrivacy(
+        candidateInputs: candidateInputs,
+      );
+      var selectedUtxo = availableInputs.firstWhere(
+          (i) =>
+              i.outpoint.txid == selectedOutpoint.txid &&
+              i.outpoint.vout == selectedOutpoint.vout,
+          orElse: () => throw Exception('UTXO not found'));
+      var txoToContribute = types.TxOut(
+        value: selectedUtxo.txout.value,
+        scriptPubkey: selectedUtxo.txout.scriptPubkey.bytes,
+      );
+
+      var outpointToContribute = types.OutPoint(
+        txid: selectedUtxo.outpoint.txid.toString(),
+        vout: selectedUtxo.outpoint.vout,
+      );
+      payjoin.contributeWitnessInput(
+        txo: txoToContribute,
+        outpoint: outpointToContribute,
+      );
+
+      /* PjUri is generated with pjos=0, so no output substitution is permitted
+      payjoin.trySubstituteReceiverOutput(
+          generateScript: () async => receiverWallet
+              .getAddress(addressIndex: const bdk.AddressIndex.increase())
+              .address
+              .scriptPubkey()
+              .bytes);*/
+      final payjoinProposal = await payjoin.finalizeProposal(
+          processPsbt: (i) => _processPsbt(i, receiverWallet));
+      return (originalTx, payjoinProposal);
+    } on Exception catch (e) {
+      debugPrint(e.toString());
+      rethrow;
+    }
+  }
+
+  Future<bool> _isOwned(Uint8List bytes, bdk.Wallet wallet) async {
+    final script = bdk.ScriptBuf(bytes: bytes);
+    return wallet.isMine(script: script);
+  }
+
+  Future<String> _processPsbt(String preProcessed, bdk.Wallet wallet) async {
+    final psbt = await bdk.PartiallySignedTransaction.fromString(preProcessed);
+    print('PSBT before: ${psbt.asString()}');
+    await wallet.sign(
+      psbt: psbt,
+      signOptions: const bdk.SignOptions(
+        trustWitnessUtxo: true,
+        allowAllSighashes: false,
+        removePartialSigs: true,
+        tryFinalize: true,
+        signWithTapInternalKey: true,
+        allowGrinding: false,
+      ),
+    );
+    print('PSBT after: ${psbt.asString()}');
+    return psbt.asString();
   }
 }

@@ -8,10 +8,11 @@ dependencies:
   bdk_flutter:
     git:
       url: https://github.com/LtbLightning/bdk-flutter
-      ref: bdk-payjoin-integration-fix
+      ref: main
   cupertino_icons: ^1.0.2
   flutter:
     sdk: flutter
+  http: ^1.2.1
   payjoin_flutter:
     git:
       url: https://github.com/LtbLightning/payjoin-flutter
