@@ -103,37 +103,58 @@ class PayjoinManager {
   }
 
   Future<send.RequestContext> buildPayjoinRequest(
-    bdk.Wallet senderWallet,
+    String originalPsbt,
     pj_uri.Uri pjUri,
     int fee,
   ) async {
-    final psbtBase64 = await buildOriginalPsbt(senderWallet, pjUri, fee);
-
     final requestBuilder = await send.RequestBuilder.fromPsbtAndUri(
-        psbtBase64: psbtBase64, pjUri: pjUri.checkPjSupported());
+        psbtBase64: originalPsbt, pjUri: pjUri.checkPjSupported());
     final requestContext =
         await requestBuilder.buildRecommended(minFeeRate: BigInt.from(1));
 
     return requestContext;
   }
 
-  Future<String?> requestV2PayjoinProposal(
+  Future<String> requestAndPollV2Proposal(
     send.RequestContext requestContext,
   ) async {
-    final (request, ctx) = await requestContext.extractContextV2(
-      await pj_uri.Url.fromString(payjoinDirectory),
-    );
-    final response = await http.post(
-      Uri.parse(request.url.asString()),
-      headers: {
-        'Content-Type': v2ContentType,
-      },
-      body: request.body,
-    );
-    final checkedPayjoinProposalPsbt =
-        await ctx.processResponse(response: response.bodyBytes);
+    while (true) {
+      debugPrint('Polling for V2 Proposal...');
+      try {
+        // Extract the request and context, keep repeating this too instead of
+        //  only the post to get the timeout error
+        final (request, ctx) = await requestContext.extractContextV2(
+          await pj_uri.Url.fromString(payjoinDirectory),
+        );
 
-    return checkedPayjoinProposalPsbt;
+        // Post the request to the server
+        final response = await http.post(
+          Uri.parse(request.url.asString()),
+          headers: {
+            'Content-Type': v2ContentType,
+          },
+          body: request.body,
+        );
+
+        // Process the server response
+        final checkedPayjoinProposal =
+            await ctx.processResponse(response: response.bodyBytes);
+
+        // If a valid proposal is received, return it
+        if (checkedPayjoinProposal != null) {
+          debugPrint('Received V2 proposal: $checkedPayjoinProposal');
+          return checkedPayjoinProposal;
+        }
+
+        debugPrint('No valid proposal received, retrying after 2 seconds...');
+
+        // Add a delay to avoid spamming the server with requests
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        // If the session times out or another error occurs, rethrow the error
+        rethrow;
+      }
+    }
   }
 
   Future<String?> handleV1Request(
@@ -161,28 +182,58 @@ class PayjoinManager {
     return proposal.psbt();
   }
 
-  Future<void> handleV2Request(
-      v2.ActiveSession session, bdk.Wallet receiverWallet) async {
-    final (originalReq, originalCtx) = await session.extractRequest();
-    final originalPsbt = await http.post(
-      Uri.parse(originalReq.url.asString()),
-      body: originalReq.body,
-      headers: {
-        'Content-Type': v2ContentType,
-      },
-    );
-    final uncheckedProposal = await session.processResponse(
-      body: originalPsbt.bodyBytes,
-      clientResponse: originalCtx,
-    );
-    // Todo: will need to see if a separate v2 handleProposal is needed or
-    //  if the v1.UncheckedProposal can be changed to a common UncheckedProposal
-    final payjoinProposal = await _handleV2Proposal(
-      proposal: uncheckedProposal!,
+  Future<v2.UncheckedProposal> pollV2Request(
+    v2.ActiveSession session,
+  ) async {
+    while (true) {
+      debugPrint('Polling for V2 Request...');
+      try {
+        // Extract the request and context, keep repeating this too instead of
+        //  only the post to get the timeout error
+        final (originalReq, originalCtx) = await session.extractRequest();
+
+        // Post the request to the server
+        final originalPsbt = await http.post(
+          Uri.parse(originalReq.url.asString()),
+          body: originalReq.body,
+          headers: {
+            'Content-Type': v2ContentType,
+          },
+        );
+
+        // Process the server response
+        final uncheckedProposal = await session.processResponse(
+          body: originalPsbt.bodyBytes,
+          clientResponse: originalCtx,
+        );
+
+        // If a valid unchecked proposal is received, return it
+        if (uncheckedProposal != null) {
+          debugPrint('Received V2 request: $uncheckedProposal');
+          return uncheckedProposal;
+        }
+
+        debugPrint('No valid proposal received, retrying after 2 seconds...');
+
+        // Add a delay to avoid spamming the server with requests
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        // If the session times out or another error occurs, rethrow the error
+        rethrow;
+      }
+    }
+  }
+
+  Future<(bdk.Transaction originalTx, v2.PayjoinProposal)> handleV2Request(
+    v2.UncheckedProposal uncheckedProposal,
+    bdk.Wallet receiverWallet,
+  ) async {
+    final (originalTx, payjoinProposal) = await _handleV2Request(
+      proposal: uncheckedProposal,
       receiverWallet: receiverWallet,
     );
     final (proposalReq, proposalCtx) = await payjoinProposal.extractV2Request();
-    final proposalPsbt = await http.post(
+    final res = await http.post(
       Uri.parse(proposalReq.url.asString()),
       body: proposalReq.body,
       headers: {
@@ -190,7 +241,19 @@ class PayjoinManager {
       },
     );
     await payjoinProposal.processResponse(
-        res: proposalPsbt.bodyBytes, ohttpContext: proposalCtx);
+      res: res.bodyBytes,
+      ohttpContext: proposalCtx,
+    );
+
+    return (originalTx, payjoinProposal);
+  }
+
+  Future<String> getTxIdFromPsbt(
+    String psbtBase64,
+  ) async {
+    final psbt = await bdk.PartiallySignedTransaction.fromString(psbtBase64);
+    final txId = psbt.extractTx().txid();
+    return txId;
   }
 
   Future<String> processV1Proposal(
@@ -339,12 +402,15 @@ class PayjoinManager {
     }
   }
 
-  Future<v2.PayjoinProposal> _handleV2Proposal({
+  Future<(bdk.Transaction originalTx, v2.PayjoinProposal)> _handleV2Request({
     required v2.UncheckedProposal proposal,
     required bdk.Wallet receiverWallet,
   }) async {
     try {
-      final _ = await proposal.extractTxToScheduleBroadcast();
+      final originalTxBytes = await proposal.extractTxToScheduleBroadcast();
+      final originalTx =
+          await bdk.Transaction.fromBytes(transactionBytes: originalTxBytes);
+
       final ownedInputs =
           await proposal.checkBroadcastSuitability(canBroadcast: (e) async {
         return true;
@@ -390,7 +456,8 @@ class PayjoinManager {
         outpoint: outpointToContribute,
       );
 
-      /*payjoin.trySubstituteReceiverOutput(
+      /* PjUri is generated with pjos=0, so no output substitution is permitted
+      payjoin.trySubstituteReceiverOutput(
           generateScript: () async => receiverWallet
               .getAddress(addressIndex: const bdk.AddressIndex.increase())
               .address
@@ -398,7 +465,7 @@ class PayjoinManager {
               .bytes);*/
       final payjoinProposal = await payjoin.finalizeProposal(
           processPsbt: (i) => _processPsbt(i, receiverWallet));
-      return payjoinProposal;
+      return (originalTx, payjoinProposal);
     } on Exception catch (e) {
       debugPrint(e.toString());
       rethrow;
