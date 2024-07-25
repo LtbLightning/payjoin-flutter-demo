@@ -341,9 +341,9 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: main
-      resolved-ref: "0d89b4d64ce22663df447d192bc73849dd74e50f"
-      url: "https://github.com/LtbLightning/payjoin-flutter"
+      ref: override-ffi-functions
+      resolved-ref: e9fe95ca335434d787c82d4efda6cba381b9138c
+      url: "https://github.com/kumulynja/payjoin-flutter"
     source: git
     version: "0.18.0"
   plugin_platform_interface:

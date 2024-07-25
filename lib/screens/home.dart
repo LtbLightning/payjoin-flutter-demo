@@ -50,8 +50,7 @@ class _HomeState extends State<Home> {
       : "Send Bit";
 
   Future<void> generateMnemonicHandler() async {
-    var res =
-        await (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
+    var res = (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
 
     setState(() {
       mnemonic.text = res;
@@ -599,15 +598,25 @@ class _HomeState extends State<Home> {
 
         final transaction =
             await payjoinManager.extractPjTx(wallet, checkedProposal);
-        final txId = await blockchain.broadcast(transaction: transaction);
-        debugPrint('TxId: $txId');
+        String? txId;
+        try {
+          txId = await blockchain.broadcast(transaction: transaction);
+          debugPrint('TxId: $txId');
+        } catch (e) {
+          debugPrint('Error broadcasting tx: $e');
+        }
+
         resetPayjoinSession();
 
-        showBottomSheet(
-          txId,
-          toCopy: txId,
-          toUrl: 'https://mutinynet.com/tx/$txId',
-        );
+        if (txId != null) {
+          showBottomSheet(
+            txId,
+            toCopy: txId,
+            toUrl: 'https://mutinynet.com/tx/$txId',
+          );
+        } else {
+          showBottomSheet('Error broadcasting tx');
+        }
       }
     }
   }
@@ -644,9 +653,11 @@ class _HomeState extends State<Home> {
         );
         resetPayjoinSession();
 
-        showBottomSheet(
-          '${receivedTxId == proposalTxId ? 'Payjoin' : 'Original'} tx received!',
-        );
+        if (receivedTxId.isNotEmpty) {
+          showBottomSheet(
+            '${receivedTxId == proposalTxId ? 'Payjoin' : 'Original'} tx received!',
+          );
+        }
       } else {
         if (pjUri.isEmpty) {
           await initReceiverSession();
@@ -715,6 +726,10 @@ class _HomeState extends State<Home> {
       return tx.txid;
     } catch (e) {
       debugPrint('Tx not found, retrying after $timeout second(s)...');
+      if (reqCtx == null) {
+        // The session was canceled, stop polling
+        return '';
+      }
       await Future.delayed(Duration(seconds: timeout));
       return waitForTransaction(
         originalTxId: originalTxId,
