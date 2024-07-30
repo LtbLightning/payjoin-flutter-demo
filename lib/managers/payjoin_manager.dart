@@ -457,7 +457,7 @@ class PayjoinManager {
       );
 
       /* PjUri is generated with pjos=0, so no output substitution is permitted
-      payjoin.trySubstituteReceiverOutput(
+      await payjoin.trySubstituteReceiverOutput(
           generateScript: () async => receiverWallet
               .getAddress(addressIndex: const bdk.AddressIndex.increase())
               .address
