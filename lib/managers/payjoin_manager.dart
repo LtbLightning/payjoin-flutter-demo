@@ -381,12 +381,12 @@ class PayjoinManager {
         txid: selectedUtxo.outpoint.txid.toString(),
         vout: selectedUtxo.outpoint.vout,
       );
-      payjoin.contributeWitnessInput(
+      await payjoin.contributeWitnessInput(
         txo: txoToContribute,
         outpoint: outpointToContribute,
       );
 
-      payjoin.trySubstituteReceiverOutput(
+      await payjoin.trySubstituteReceiverOutput(
           generateScript: () async => receiverWallet
               .getAddress(addressIndex: const bdk.AddressIndex.increase())
               .address
@@ -451,7 +451,7 @@ class PayjoinManager {
         txid: selectedUtxo.outpoint.txid.toString(),
         vout: selectedUtxo.outpoint.vout,
       );
-      payjoin.contributeWitnessInput(
+      await payjoin.contributeWitnessInput(
         txo: txoToContribute,
         outpoint: outpointToContribute,
       );
