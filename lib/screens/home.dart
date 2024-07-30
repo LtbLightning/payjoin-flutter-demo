@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:payjoin_flutter/common.dart';
 import 'package:payjoin_flutter/receive/v2.dart' as v2;
 import 'package:payjoin_flutter/send.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/widgets.dart';
 
 class Home extends StatefulWidget {
@@ -49,8 +50,7 @@ class _HomeState extends State<Home> {
       : "Send Bit";
 
   Future<void> generateMnemonicHandler() async {
-    var res =
-        await (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
+    var res = (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
 
     setState(() {
       mnemonic.text = res;
@@ -344,7 +344,11 @@ class _HomeState extends State<Home> {
     }
   }
 
-  showBottomSheet(String value) {
+  showBottomSheet(
+    String text, {
+    String? toCopy,
+    String? toUrl,
+  }) {
     return showModalBottomSheet(
       useSafeArea: true,
       context: context,
@@ -352,10 +356,11 @@ class _HomeState extends State<Home> {
         padding: const EdgeInsets.all(16.0),
         child: Row(
           children: [
-            Expanded(child: Text(value)),
-            IconButton(
+            Expanded(child: Text(text)),
+            if (toCopy != null && toCopy.isNotEmpty)
+              IconButton(
                 onPressed: () {
-                  Clipboard.setData(ClipboardData(text: value));
+                  Clipboard.setData(ClipboardData(text: toCopy));
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                     content: Text('Copied to clipboard!'),
@@ -364,7 +369,18 @@ class _HomeState extends State<Home> {
                 icon: const Icon(
                   Icons.copy,
                   size: 36,
-                ))
+                ),
+              ),
+            if (toUrl != null && toUrl.isNotEmpty)
+              IconButton(
+                onPressed: () {
+                  launchUrl(Uri.parse(toUrl));
+                },
+                icon: const Icon(
+                  Icons.open_in_browser,
+                  size: 36,
+                ),
+              ),
           ],
         ),
       ),
@@ -550,6 +566,8 @@ class _HomeState extends State<Home> {
       showBottomSheet(
         '${psbt == originalPsbt ? 'Original tx with id' : 'Payjoin tx with id'} '
         '$txId broadcasted!',
+        toCopy: txId,
+        toUrl: 'https://mutinynet.com/tx/$txId',
       );
     } else {
       // Build V1 payjoin request with original psbt
@@ -570,7 +588,7 @@ class _HomeState extends State<Home> {
         setState(() {
           reqCtx = request;
         });
-        showBottomSheet(originalPsbt);
+        showBottomSheet(originalPsbt, toCopy: originalPsbt);
       } else {
         // Finalize payjoin
         final proposalPsbt = receiverPsbtController.text;
@@ -580,11 +598,25 @@ class _HomeState extends State<Home> {
 
         final transaction =
             await payjoinManager.extractPjTx(wallet, checkedProposal);
-        final txId = await blockchain.broadcast(transaction: transaction);
-        debugPrint('TxId: $txId');
+        String? txId;
+        try {
+          txId = await blockchain.broadcast(transaction: transaction);
+          debugPrint('TxId: $txId');
+        } catch (e) {
+          debugPrint('Error broadcasting tx: $e');
+        }
+
         resetPayjoinSession();
 
-        showBottomSheet(txId);
+        if (txId != null) {
+          showBottomSheet(
+            txId,
+            toCopy: txId,
+            toUrl: 'https://mutinynet.com/tx/$txId',
+          );
+        } else {
+          showBottomSheet('Error broadcasting tx');
+        }
       }
     }
   }
@@ -621,9 +653,11 @@ class _HomeState extends State<Home> {
         );
         resetPayjoinSession();
 
-        showBottomSheet(
-          '${receivedTxId == proposalTxId ? 'Payjoin' : 'Original'} tx received!',
-        );
+        if (receivedTxId.isNotEmpty) {
+          showBottomSheet(
+            '${receivedTxId == proposalTxId ? 'Payjoin' : 'Original'} tx received!',
+          );
+        }
       } else {
         if (pjUri.isEmpty) {
           await initReceiverSession();
@@ -635,7 +669,7 @@ class _HomeState extends State<Home> {
             return throw Exception("Response is null");
           }
           resetPayjoinSession();
-          showBottomSheet(proposalPsbt);
+          showBottomSheet(proposalPsbt, toCopy: proposalPsbt);
         }
       }
     } catch (e) {
@@ -643,7 +677,7 @@ class _HomeState extends State<Home> {
       if (e is PayjoinException) {
         // In a real app you would handle the error better
         debugPrint(e.toString());
-        showBottomSheet('PJ error: ${e.message}');
+        showBottomSheet('PayJoin error: ${e.message}');
         resetPayjoinSession();
       }
     }
@@ -680,6 +714,7 @@ class _HomeState extends State<Home> {
   Future<String> waitForTransaction({
     required String originalTxId,
     required String proposalTxId,
+    int timeout = 1,
   }) async {
     debugPrint('Waiting for payjoin tx to be sent...');
     await syncWallet();
@@ -690,8 +725,12 @@ class _HomeState extends State<Home> {
       debugPrint('Tx found: ${tx.txid}');
       return tx.txid;
     } catch (e) {
-      debugPrint('Tx not found, retrying after 3 seconds...');
-      await Future.delayed(const Duration(seconds: 3));
+      debugPrint('Tx not found, retrying after $timeout second(s)...');
+      if (reqCtx == null) {
+        // The session was canceled, stop polling
+        return '';
+      }
+      await Future.delayed(Duration(seconds: timeout));
       return waitForTransaction(
         originalTxId: originalTxId,
         proposalTxId: proposalTxId,

@@ -63,7 +63,7 @@ class PayjoinManager {
 
   Future<pj_uri.Uri> stringToUri(String pj) async {
     try {
-      return await pj_uri.Uri.fromString(pj);
+      return await pj_uri.Uri.fromStr(pj);
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
@@ -123,8 +123,8 @@ class PayjoinManager {
       try {
         // Extract the request and context, keep repeating this too instead of
         //  only the post to get the timeout error
-        final (request, ctx) = await requestContext.extractContextV2(
-          await pj_uri.Url.fromString(payjoinDirectory),
+        final (request, ctx) = await requestContext.extractV2(
+          ohttpProxyUrl: await pj_uri.Url.fromStr(payjoinDirectory),
         );
 
         // Post the request to the server
@@ -190,7 +190,7 @@ class PayjoinManager {
       try {
         // Extract the request and context, keep repeating this too instead of
         //  only the post to get the timeout error
-        final (originalReq, originalCtx) = await session.extractRequest();
+        final (originalReq, originalCtx) = await session.extractReq();
 
         // Post the request to the server
         final originalPsbt = await http.post(
@@ -202,9 +202,9 @@ class PayjoinManager {
         );
 
         // Process the server response
-        final uncheckedProposal = await session.processResponse(
+        final uncheckedProposal = await session.processRes(
           body: originalPsbt.bodyBytes,
-          clientResponse: originalCtx,
+          ctx: originalCtx,
         );
 
         // If a valid unchecked proposal is received, return it
@@ -232,7 +232,7 @@ class PayjoinManager {
       proposal: uncheckedProposal,
       receiverWallet: receiverWallet,
     );
-    final (proposalReq, proposalCtx) = await payjoinProposal.extractV2Request();
+    final (proposalReq, proposalCtx) = await payjoinProposal.extractV2Req();
     final res = await http.post(
       Uri.parse(proposalReq.url.asString()),
       body: proposalReq.body,
@@ -240,7 +240,7 @@ class PayjoinManager {
         'Content-Type': v2ContentType,
       },
     );
-    await payjoinProposal.processResponse(
+    await payjoinProposal.processRes(
       res: res.bodyBytes,
       ohttpContext: proposalCtx,
     );
@@ -260,7 +260,7 @@ class PayjoinManager {
     send.RequestContext reqCtx,
     String proposalPsbt,
   ) async {
-    final (_, ctx) = await reqCtx.extractContextV1();
+    final (_, ctx) = await reqCtx.extractV1();
     final checkedProposal =
         await ctx.processResponse(response: utf8.encode(proposalPsbt));
     debugPrint('Processed Response: $checkedProposal');
@@ -271,8 +271,8 @@ class PayjoinManager {
     send.RequestContext reqCtx,
     String proposalPsbt,
   ) async {
-    final (_, ctx) = await reqCtx.extractContextV2(
-      await pj_uri.Url.fromString(payjoinDirectory),
+    final (_, ctx) = await reqCtx.extractV2(
+      ohttpProxyUrl: await pj_uri.Url.fromStr(payjoinDirectory),
     );
     final checkedProposal =
         await ctx.processResponse(response: utf8.encode(proposalPsbt));
@@ -303,8 +303,8 @@ class PayjoinManager {
     required Network network,
     required int expireAfter,
   }) async {
-    final ohttpRelayUrl = await pj_uri.Url.fromString(ohttpRelay);
-    final payjoinDirectoryUrl = await pj_uri.Url.fromString(payjoinDirectory);
+    final ohttpRelayUrl = await pj_uri.Url.fromStr(ohttpRelay);
+    final payjoinDirectoryUrl = await pj_uri.Url.fromStr(payjoinDirectory);
     pj_uri.OhttpKeys ohttpKeys = await pj_uri.fetchOhttpKeys(
       ohttpRelay: ohttpRelayUrl,
       payjoinDirectory: payjoinDirectoryUrl,
@@ -319,7 +319,7 @@ class PayjoinManager {
       expireAfter: BigInt.from(expireAfter),
     );
 
-    final (req, ctx) = await session.extractRequest();
+    final (req, ctx) = await session.extractReq();
     final response = await http.post(
       Uri.parse(req.url.asString()),
       body: req.body,
@@ -327,9 +327,9 @@ class PayjoinManager {
         'Content-Type': v2ContentType,
       },
     );
-    final activeSession = await session.processResponse(
+    final activeSession = await session.processRes(
       body: response.bodyBytes,
-      clientResponse: ctx,
+      ctx: ctx,
     );
 
     return activeSession;
@@ -381,12 +381,12 @@ class PayjoinManager {
         txid: selectedUtxo.outpoint.txid.toString(),
         vout: selectedUtxo.outpoint.vout,
       );
-      payjoin.contributeWitnessInput(
+      await payjoin.contributeWitnessInput(
         txo: txoToContribute,
         outpoint: outpointToContribute,
       );
 
-      payjoin.trySubstituteReceiverOutput(
+      await payjoin.trySubstituteReceiverOutput(
           generateScript: () async => receiverWallet
               .getAddress(addressIndex: const bdk.AddressIndex.increase())
               .address
@@ -451,13 +451,13 @@ class PayjoinManager {
         txid: selectedUtxo.outpoint.txid.toString(),
         vout: selectedUtxo.outpoint.vout,
       );
-      payjoin.contributeWitnessInput(
+      await payjoin.contributeWitnessInput(
         txo: txoToContribute,
         outpoint: outpointToContribute,
       );
 
       /* PjUri is generated with pjos=0, so no output substitution is permitted
-      payjoin.trySubstituteReceiverOutput(
+      await payjoin.trySubstituteReceiverOutput(
           generateScript: () async => receiverWallet
               .getAddress(addressIndex: const bdk.AddressIndex.increase())
               .address
