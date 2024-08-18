@@ -125,7 +125,7 @@ AppBar buildAppBar(BuildContext context) {
     actions: [
       Padding(
         padding: const EdgeInsets.only(right: 20, bottom: 10, top: 10),
-        child: Image.asset("assets/pdk_logo.png"),
+        child: Image.asset("assets/bdk_logo.png"),
       )
     ],
     leading: Icon(
@@ -133,17 +133,17 @@ AppBar buildAppBar(BuildContext context) {
       color: Theme.of(context).secondaryHeaderColor,
       size: 40,
     ),
-    title:
-        Text("Payjoin Demo", style: Theme.of(context).textTheme.displayLarge),
+    title: Text("Payjoin Tutorial",
+        style: Theme.of(context).textTheme.displayLarge),
   );
 }
 
 class SelectFeeRange extends StatelessWidget {
-  const SelectFeeRange({super.key, this.feeRange});
+  const SelectFeeRange({super.key,this.feeRange});
   final FeeRangeEnum? feeRange;
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return  Column(
       children: [
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -151,9 +151,7 @@ class SelectFeeRange extends StatelessWidget {
             'Choose a Fee Range',
           ),
         ),
-        FeesRangeOptions(
-          feeRange: feeRange,
-        ),
+        FeesRangeOptions(feeRange: feeRange,),
       ],
     );
   }
@@ -165,7 +163,7 @@ enum FeeRangeEnum {
   low('Low', 500);
 
   final String name;
-  final int feeValue;
+  final double feeValue;
 
   const FeeRangeEnum(this.name, this.feeValue);
 
@@ -174,13 +172,15 @@ enum FeeRangeEnum {
 }
 
 class FeesRangeOptions extends StatefulWidget {
-  FeesRangeOptions({super.key, this.feeRange = FeeRangeEnum.high});
-  FeeRangeEnum? feeRange;
+   FeesRangeOptions({super.key, this.feeRange = FeeRangeEnum.high});
+  FeeRangeEnum? feeRange ;
   @override
   State<FeesRangeOptions> createState() => _FeesRangeOptionsState();
 }
 
 class _FeesRangeOptionsState extends State<FeesRangeOptions> {
+ 
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -228,31 +228,28 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
 }
 
 class CustomSwitchTile extends StatelessWidget {
-  const CustomSwitchTile(
-      {super.key,
-      required this.title,
-      required this.onChanged,
-      required this.value});
+  const CustomSwitchTile({super.key, required  this.title, required this.onChanged,required this.value});
   final String title;
   final bool value;
   final Function(bool) onChanged;
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.bodyLarge,
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Switch(
-            value: value,
-            onChanged: onChanged,
-          ),
-        ),
-      ],
-    );
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Switch(
+                value: value,
+                onChanged: onChanged,
+              ),
+            ),
+          ],
+        );
   }
 }
+
