@@ -37,11 +37,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: main
-      resolved-ref: "8a9bd981078eaa8692fc2bed869810acc9918a2c"
+      ref: bdk-payjoin-integration-fix
+      resolved-ref: ea7f666e1358bccb3fe6a99883d454bfcacf37f4
       url: "https://github.com/LtbLightning/bdk-flutter.git"
     source: git
-    version: "0.31.2"
+    version: "0.31.2-dev.2"
   boolean_selector:
     dependency: transitive
     description:
@@ -195,10 +195,10 @@ packages:
     dependency: transitive
     description:
       name: flutter_rust_bridge
-      sha256: f703c4b50e253e53efc604d50281bbaefe82d615856f8ae1e7625518ae252e98
+      sha256: e9a8716b1ad2fc81c434f3e4bf84b86c578578678c57e568b44aea7acf210102
       url: "https://pub.dev"
     source: hosted
-    version: "2.0.0"
+    version: "2.0.0-dev.31"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -220,6 +220,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
+  js:
+    dependency: transitive
+    description:
+      name: js
+      sha256: c1b2e9b5ea78c45e1a0788d29606ba27dc5f71f019f32ca5140f61ef071838cf
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.1"
   json_annotation:
     dependency: transitive
     description:
@@ -320,11 +328,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: upgrade-v20
-      resolved-ref: "95275e182ed3c2dc87619ad8fc0ac994515e10ae"
+      ref: main
+      resolved-ref: c3d300fcf942cf0e5d42a093af416ac70777a69a
       url: "https://github.com/LtbLightning/payjoin-flutter"
     source: git
-    version: "0.20.0"
+    version: "0.13.0"
   pub_semver:
     dependency: transitive
     description:
@@ -442,14 +450,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.0"
-  web:
-    dependency: transitive
-    description:
-      name: web
-      sha256: "97da13628db363c635202ad97068d47c5b8aa555808e7a9411963c533b449b27"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.5.1"
   yaml:
     dependency: transitive
     description:
@@ -459,5 +459,5 @@ packages:
     source: hosted
     version: "3.1.2"
 sdks:
-  dart: ">=3.4.0 <4.0.0"
+  dart: ">=3.3.0 <4.0.0"
   flutter: ">=3.18.0-18.0.pre.54"
