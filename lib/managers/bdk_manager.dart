@@ -25,10 +25,8 @@ class BdkManager {
   ///Step2:Client
   Future<Blockchain> blockchainInit(String esploraUrl) async {
     try {
-      return await Blockchain.create(
-          config: BlockchainConfig.esplora(
-              config: EsploraConfig(baseUrl: esploraUrl, stopGap: 10)));
-    } on Exception catch (e) {
+      return await Blockchain.createMutinynet();
+    } on Exception {
       rethrow;
     }
   }
@@ -64,11 +62,11 @@ class BdkManager {
   Future<PartiallySignedTransaction> buildPsbt(
       Wallet wallet, String address, int amount, double feeRate) async {
     final txBuilder = TxBuilder();
-    final script = await (await Address.fromString(
-            s: address, network: await wallet.network()))
-        .scriptPubkey();
+    final script =
+        (await Address.fromString(s: address, network: wallet.network()))
+            .scriptPubkey();
     final psbt = await txBuilder
-        .addRecipient(script, amount)
+        .addRecipient(script, BigInt.from(amount))
         .feeRate(feeRate)
         .finish(wallet);
     return psbt.$1;

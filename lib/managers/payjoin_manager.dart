@@ -27,31 +27,30 @@ class PayJoinManager {
 
   Future<pj_uri.Uri> stringToUri(String pj) async {
     try {
-      return await pj_uri.Uri.fromString(pj);
+      return await pj_uri.Uri.fromStr(pj);
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
     }
   }
 
+//please century boy hobby blade nothing clinic okay fit kitten detail horn
   Future<(String?, send.ContextV1)> handlePjRequest(
-      String psbtBase64, pj_uri.Uri uri, receiverWallet) async {
+      String psbtBase64, pj_uri.PjUri uri, receiverWallet) async {
     final (req, cxt) = await (await (await send.RequestBuilder.fromPsbtAndUri(
-                psbtBase64: psbtBase64, uri: uri))
+                psbtBase64: psbtBase64, pjUri: uri))
             .buildWithAdditionalFee(
-                maxFeeContribution: 1000,
-                minFeeRate: 0,
+                maxFeeContribution: BigInt.from(1000),
+                minFeeRate: BigInt.from(0),
                 clampFeeContribution: false))
-        .extractContextV1();
+        .extractV1();
 
     final headers = Headers(map: {
       'content-type': 'text/plain',
       'content-length': req.body.length.toString(),
     });
     final uncheckedProposal = await v1.UncheckedProposal.fromRequest(
-        body: req.body.toList(),
-        query: (await req.url.query())!,
-        headers: headers);
+        body: req.body.toList(), query: (req.url.query())!, headers: headers);
 
     final proposal = await handleProposal(
         proposal: uncheckedProposal, receiverWallet: receiverWallet);
@@ -65,12 +64,12 @@ class PayJoinManager {
 
   Future<bool> isOwned(Uint8List bytes, Wallet wallet) async {
     final script = ScriptBuf(bytes: bytes);
-    return await wallet.isMine(script: script);
+    return wallet.isMine(script: script);
   }
 
   Future<String> processPsbt(String preProcessed, Wallet receiverWallet) async {
     return (await bdkManager.signPsbt(preProcessed, receiverWallet))!
-        .serialize();
+        .toString();
   }
 
   Future<v1.PayjoinProposal?> handleProposal({
@@ -94,8 +93,8 @@ class PayJoinManager {
         isReceiverOutput: (i) => isReceiverOutput(i, receiverWallet),
       );
 
-      final availableInputs = await receiverWallet.listUnspent();
-      Map<int, types.OutPoint> candidateInputs = {
+      final availableInputs = receiverWallet.listUnspent();
+      Map<BigInt, types.OutPoint> candidateInputs = {
         for (var input in availableInputs)
           input.txout.value: types.OutPoint(
               txid: input.outpoint.txid.toString(), vout: input.outpoint.vout)
@@ -118,11 +117,6 @@ class PayJoinManager {
       );
       provisionalProposal.contributeWitnessInput(
           txo: txoToContribute, outpoint: outpointToContribute);
-      final newReceiverAddress = await ((await receiverWallet.getAddress(
-                  addressIndex: const AddressIndex.increase()))
-              .address)
-          .asString();
-      provisionalProposal.substituteOutputAddress(address: newReceiverAddress);
       final payjoinProposal = await provisionalProposal.finalizeProposal(
           processPsbt: (i) => processPsbt(i, receiverWallet));
       return payjoinProposal;

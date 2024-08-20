@@ -139,11 +139,11 @@ AppBar buildAppBar(BuildContext context) {
 }
 
 class SelectFeeRange extends StatelessWidget {
-  const SelectFeeRange({super.key,this.feeRange});
+  const SelectFeeRange({super.key, this.feeRange});
   final FeeRangeEnum? feeRange;
   @override
   Widget build(BuildContext context) {
-    return  Column(
+    return Column(
       children: [
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -151,7 +151,9 @@ class SelectFeeRange extends StatelessWidget {
             'Choose a Fee Range',
           ),
         ),
-        FeesRangeOptions(feeRange: feeRange,),
+        FeesRangeOptions(
+          feeRange: feeRange,
+        ),
       ],
     );
   }
@@ -172,15 +174,13 @@ enum FeeRangeEnum {
 }
 
 class FeesRangeOptions extends StatefulWidget {
-   FeesRangeOptions({super.key, this.feeRange = FeeRangeEnum.high});
-  FeeRangeEnum? feeRange ;
+  FeesRangeOptions({super.key, this.feeRange = FeeRangeEnum.high});
+  FeeRangeEnum? feeRange;
   @override
   State<FeesRangeOptions> createState() => _FeesRangeOptionsState();
 }
 
 class _FeesRangeOptionsState extends State<FeesRangeOptions> {
- 
-
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -228,28 +228,31 @@ class _FeesRangeOptionsState extends State<FeesRangeOptions> {
 }
 
 class CustomSwitchTile extends StatelessWidget {
-  const CustomSwitchTile({super.key, required  this.title, required this.onChanged,required this.value});
+  const CustomSwitchTile(
+      {super.key,
+      required this.title,
+      required this.onChanged,
+      required this.value});
   final String title;
   final bool value;
   final Function(bool) onChanged;
   @override
   Widget build(BuildContext context) {
     return Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              title,
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Switch(
-                value: value,
-                onChanged: onChanged,
-              ),
-            ),
-          ],
-        );
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Switch(
+            value: value,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
+    );
   }
 }
-

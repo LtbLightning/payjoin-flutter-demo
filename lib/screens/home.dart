@@ -5,7 +5,7 @@ import 'package:bdk_flutter/bdk_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
+import 'package:payjoin_flutter/uri.dart' as pj_uri;
 import '../managers/bdk_manager.dart';
 import '../managers/payjoin_manager.dart';
 import '../widgets/widgets.dart';
@@ -35,7 +35,7 @@ class _HomeState extends State<Home> {
   FeeRangeEnum? feeRange;
   PayJoinManager payjoinManager = PayJoinManager();
   BdkManager bdkManager = BdkManager();
-  dynamic pjUri;
+  late pj_uri.Uri pjUri;
   bool isRequestSent = false;
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
@@ -110,9 +110,9 @@ class _HomeState extends State<Home> {
     try {
       final psbt = await bdkManager.buildPsbt(wallet, addressStr, amount, 5);
 
-      final res = bdkManager.signPsbt(await psbt.serialize(), wallet);
+      final res = bdkManager.signPsbt(psbt.toString(), wallet);
       if (res != null) {
-        final tx = await psbt.extractTx();
+        final tx = psbt.extractTx();
         final res = await blockchain.broadcast(transaction: tx);
         debugPrint(res);
       } else {
@@ -130,7 +130,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> syncWallet() async {
-    wallet.sync(blockchain: blockchain);
+    await wallet.sync(blockchain: blockchain);
     await getBalance();
   }
 
@@ -197,7 +197,7 @@ class _HomeState extends State<Home> {
                       text: "Create Wallet",
                       callback: () async {
                         await createOrRestoreWallet(
-                            mnemonic.text, Network.regtest);
+                            mnemonic.text, Network.signet);
                       },
                     ),
                     SubmitButton(
@@ -403,18 +403,17 @@ class _HomeState extends State<Home> {
   Future performSender() async {
     try {
       if (!isRequestSent) {
-        String senderPsbt = await (await bdkManager.buildPsbt(
+        String senderPsbt = (await bdkManager.buildPsbt(
                 wallet,
-                await (await payjoinManager.stringToUri(pjUriController.text))
+                (await payjoinManager.stringToUri(pjUriController.text))
                     .address(),
-                (((await (await payjoinManager
-                                    .stringToUri(pjUriController.text))
+                ((((await payjoinManager.stringToUri(pjUriController.text))
                                 .amount()) ??
                             0) *
                         100000000)
                     .toInt(),
                 feeRange?.feeValue ?? FeeRangeEnum.high.feeValue))
-            .serialize();
+            .toString();
         showBottomSheet(senderPsbt);
 
         setState(() {
@@ -430,7 +429,9 @@ class _HomeState extends State<Home> {
           displayText = "PayJoin transaction successfully completed: $txid";
         });
       }
-    } on Exception catch (e) {}
+    } on Exception catch (e) {
+      debugPrint(e.toString());
+    }
   }
 
   //Receiver
@@ -438,8 +439,9 @@ class _HomeState extends State<Home> {
     if (pjUri == null) {
       buildReceiverPjUri();
     } else {
-      final (String? receiverPsbt, contextV1) = await payjoinManager
-          .handlePjRequest(psbtController.text, pjUri, wallet);
+      final (String? receiverPsbt, contextV1) =
+          await payjoinManager.handlePjRequest(
+              psbtController.text, pjUri.checkPjSupported(), wallet);
       if (receiverPsbt == null) {
         return throw Exception("Response is null");
       }
