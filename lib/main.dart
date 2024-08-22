@@ -1,6 +1,6 @@
+import 'package:bdk_flutter_demo/screens/home.dart';
+import 'package:bdk_flutter_demo/styles/theme.dart';
 import 'package:flutter/material.dart';
-import 'package:payjoin_flutter_demo/screens/home.dart';
-import 'package:payjoin_flutter_demo/styles/theme.dart';
 
 void main() {
   runApp(const MyApp());
@@ -14,7 +14,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'PayJoin Flutter Demo',
+      title: 'Payjoin Flutter Demo',
       theme: theme(),
       home: const Home(),
     );

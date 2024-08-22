@@ -125,7 +125,7 @@ AppBar buildAppBar(BuildContext context) {
     actions: [
       Padding(
         padding: const EdgeInsets.only(right: 20, bottom: 10, top: 10),
-        child: Image.asset("assets/bdk_logo.png"),
+        child: Image.asset("assets/pdk_logo.png"),
       )
     ],
     leading: Icon(
@@ -133,8 +133,8 @@ AppBar buildAppBar(BuildContext context) {
       color: Theme.of(context).secondaryHeaderColor,
       size: 40,
     ),
-    title: Text("Payjoin Tutorial",
-        style: Theme.of(context).textTheme.displayLarge),
+    title:
+        Text("Payjoin Demo", style: Theme.of(context).textTheme.displayLarge),
   );
 }
 
@@ -165,7 +165,7 @@ enum FeeRangeEnum {
   low('Low', 500);
 
   final String name;
-  final double feeValue;
+  final int feeValue;
 
   const FeeRangeEnum(this.name, this.feeValue);
 

@@ -1,13 +1,12 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:bdk_flutter/bdk_flutter.dart';
+import 'package:bdk_flutter/bdk_flutter.dart' as bdk;
+import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:payjoin_flutter/uri.dart' as pj_uri;
-import '../managers/bdk_manager.dart';
-import '../managers/payjoin_manager.dart';
+import 'package:payjoin_flutter/common.dart';
+import 'package:payjoin_flutter/receive/v2.dart' as v2;
+import 'package:payjoin_flutter/send.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/widgets.dart';
 
 class Home extends StatefulWidget {
@@ -17,10 +16,9 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
-//cart super leaf clinic pistol plug replace close super tooth wealth usage
 class _HomeState extends State<Home> {
-  late Wallet wallet;
-  late Blockchain blockchain;
+  late bdk.Wallet wallet;
+  late bdk.Blockchain blockchain;
   String? displayText;
   String? address;
   String balance = "0";
@@ -32,45 +30,82 @@ class _HomeState extends State<Home> {
   TextEditingController receiverPsbtController = TextEditingController();
   bool _isPayjoinEnabled = false;
   bool isReceiver = false;
+  bool isV2 = true;
+  v2.ActiveSession? v2Session;
+  RequestContext? reqCtx;
+  v2.UncheckedProposal? uncheckedProposal;
+  v2.PayjoinProposal? payjoinProposal;
   FeeRangeEnum? feeRange;
-  PayJoinManager payjoinManager = PayJoinManager();
-  BdkManager bdkManager = BdkManager();
-  late pj_uri.Uri pjUri;
-  bool isRequestSent = false;
+  PayjoinManager payjoinManager = PayjoinManager();
+  String pjUri = '';
 
   String get getSubmitButtonTitle => _isPayjoinEnabled
-      ? isRequestSent
+      ? reqCtx != null
           ? "Finalize Payjoin"
           : isReceiver
-              ? pjUri != null
+              ? pjUri.isNotEmpty
                   ? "Handle Request"
                   : "Build Pj Uri"
               : "Perform Payjoin"
       : "Send Bit";
 
   Future<void> generateMnemonicHandler() async {
-    var res = await (await Mnemonic.create(WordCount.words12)).asString();
+    var res = (await bdk.Mnemonic.create(bdk.WordCount.words12)).asString();
+
     setState(() {
       mnemonic.text = res;
       displayText = res;
     });
   }
 
+  Future<List<bdk.Descriptor>> getDescriptors(String mnemonicStr) async {
+    final descriptors = <bdk.Descriptor>[];
+    try {
+      for (var e in [
+        bdk.KeychainKind.externalChain,
+        bdk.KeychainKind.internalChain
+      ]) {
+        final mnemonic = await bdk.Mnemonic.fromString(mnemonicStr);
+        final descriptorSecretKey = await bdk.DescriptorSecretKey.create(
+          network: bdk.Network.signet,
+          mnemonic: mnemonic,
+        );
+        final descriptor = await bdk.Descriptor.newBip86(
+            secretKey: descriptorSecretKey,
+            network: bdk.Network.signet,
+            keychain: e);
+        descriptors.add(descriptor);
+      }
+      return descriptors;
+    } on Exception catch (e) {
+      setState(() {
+        displayText = "Error : ${e.toString()}";
+      });
+      rethrow;
+    }
+  }
+
   createOrRestoreWallet(
     String mnemonic,
-    Network network, {
+    bdk.Network network,
     String? password,
-  }) async {
+    String path, //TODO: Derived error: Address contains key path
+  ) async {
     try {
-      wallet =
-          await bdkManager.createOrRestoreWallet(mnemonic, network, password);
-      await getNewAddress();
-      String esploraUrl = Platform.isAndroid
-          ? 'http://10.0.2.2:30000'
-          : 'http://127.0.0.1:30000';
-      blockchain = await bdkManager.blockchainInit(esploraUrl);
+      final descriptors = await getDescriptors(mnemonic);
+      await blockchainInit();
+      final res = await bdk.Wallet.create(
+          descriptor: descriptors[0],
+          changeDescriptor: descriptors[1],
+          network: network,
+          databaseConfig: const bdk.DatabaseConfig.memory());
       setState(() {
-        displayText = "Wallet created successfully\n address: $address";
+        wallet = res;
+      });
+      var addressInfo = await getNewAddress();
+      address = await addressInfo.address.asString();
+      setState(() {
+        displayText = "Wallet Created: $address";
       });
     } on Exception catch (e) {
       setState(() {
@@ -79,23 +114,8 @@ class _HomeState extends State<Home> {
     }
   }
 
-  getNewAddress() async {
-    final res = address =
-        await (await bdkManager.getNewAddress(wallet)).address.asString();
-    if (kDebugMode) {
-      print(res);
-    }
-    setState(() {
-      displayText = address;
-      if (isReceiver && address != null) {
-        recipientAddress.text = address!;
-      }
-    });
-    return res;
-  }
-
   Future<void> getBalance() async {
-    final balanceObj = await wallet.getBalance();
+    final balanceObj = wallet.getBalance();
     final res = "Total Balance: ${balanceObj.total.toString()}";
     if (kDebugMode) {
       print(res);
@@ -106,13 +126,37 @@ class _HomeState extends State<Home> {
     });
   }
 
+  Future<bdk.AddressInfo> getNewAddress() async {
+    final res = await wallet.getAddress(
+        addressIndex: const bdk.AddressIndex.increase());
+    if (kDebugMode) {
+      print(res.address);
+    }
+    address = await res.address.asString();
+    setState(() {
+      displayText = address;
+      if (isReceiver && address != null) {
+        recipientAddress.text = address!;
+      }
+    });
+    return res;
+  }
+
   Future<void> sendTx(String addressStr, int amount) async {
     try {
-      final psbt = await bdkManager.buildPsbt(wallet, addressStr, amount, 5);
+      final txBuilder = bdk.TxBuilder();
+      final address = await bdk.Address.fromString(
+          s: addressStr, network: bdk.Network.signet);
+      final script = await address.scriptPubkey();
 
-      final res = bdkManager.signPsbt(psbt.toString(), wallet);
-      if (res != null) {
-        final tx = psbt.extractTx();
+      final psbt = await txBuilder
+          .addRecipient(script, BigInt.from(amount))
+          .feeRate(1.0)
+          .finish(wallet);
+
+      final isFinalized = await wallet.sign(psbt: psbt.$1);
+      if (isFinalized) {
+        final tx = psbt.$1.extractTx();
         final res = await blockchain.broadcast(transaction: tx);
         debugPrint(res);
       } else {
@@ -129,14 +173,47 @@ class _HomeState extends State<Home> {
     }
   }
 
+/* const BlockchainConfig.electrum(
+              config: ElectrumConfig(
+                  stopGap: 10,
+                  timeout: 5,
+                  retry: 5,
+                  url: "ssl://electrum.blockstream.info:60002",
+                  validateDomain: false)) */
+  ///Step2:Client
+  blockchainInit() async {
+    String esploraUrl = 'https://mutinynet.com/api';
+    try {
+      blockchain = await bdk.Blockchain.create(
+          config: bdk.BlockchainConfig.esplora(
+              config: bdk.EsploraConfig(
+                  baseUrl: esploraUrl, stopGap: BigInt.from(10))));
+    } on Exception catch (e) {
+      setState(() {
+        displayText = "Error: ${e.toString()}";
+      });
+    }
+  }
+
   Future<void> syncWallet() async {
-    await wallet.sync(blockchain: blockchain);
+    wallet.sync(blockchain: blockchain);
     await getBalance();
   }
 
-  Future<void> changePayJoin(bool value) async {
+  Future<void> changePayjoin(bool value) async {
     setState(() {
       _isPayjoinEnabled = value;
+    });
+    // Reset the payjoin state when disabling it.
+    // This is useful to start a new payjoin session by toggling the switch.
+    if (!value) {
+      resetPayjoinSession();
+    }
+  }
+
+  Future<void> changeV2(bool value) async {
+    setState(() {
+      isV2 = value;
     });
   }
 
@@ -196,8 +273,8 @@ class _HomeState extends State<Home> {
                     SubmitButton(
                       text: "Create Wallet",
                       callback: () async {
-                        await createOrRestoreWallet(
-                            mnemonic.text, Network.signet);
+                        await createOrRestoreWallet(mnemonic.text,
+                            bdk.Network.signet, "password", "m/84'/1'/0'");
                       },
                     ),
                     SubmitButton(
@@ -223,17 +300,37 @@ class _HomeState extends State<Home> {
                       CustomSwitchTile(
                         title: "Payjoin",
                         value: _isPayjoinEnabled,
-                        onChanged: changePayJoin,
+                        onChanged: changePayjoin,
                       ),
                       _isPayjoinEnabled ? buildPayjoinFields() : buildFields(),
-                      SubmitButton(
-                        text: getSubmitButtonTitle,
-                        callback: () async {
-                          _isPayjoinEnabled
-                              ? performPayjoin(formKey)
-                              : await onSendBit(formKey);
-                        },
-                      )
+                      v2Session == null && reqCtx == null
+                          ? SubmitButton(
+                              text: getSubmitButtonTitle,
+                              callback: () async {
+                                _isPayjoinEnabled
+                                    ? performPayjoin(formKey)
+                                    : await onSendBit(formKey);
+                              },
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const CircularProgressIndicator(),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Text(
+                                    v2Session != null
+                                        ? payjoinProposal != null
+                                            ? 'Proposal sent, waiting for tx...'
+                                            : uncheckedProposal != null
+                                                ? 'Received request, adding inputs to proposal...'
+                                                : 'Session initiated, waiting for request...'
+                                        : 'Request sent, waiting for proposal to finalize tx...',
+                                  ),
+                                ),
+                              ],
+                            ),
                     ]),
               ))
             ],
@@ -247,7 +344,11 @@ class _HomeState extends State<Home> {
     }
   }
 
-  showBottomSheet(String value) {
+  showBottomSheet(
+    String text, {
+    String? toCopy,
+    String? toUrl,
+  }) {
     return showModalBottomSheet(
       useSafeArea: true,
       context: context,
@@ -255,10 +356,11 @@ class _HomeState extends State<Home> {
         padding: const EdgeInsets.all(16.0),
         child: Row(
           children: [
-            Expanded(child: Text(value)),
-            IconButton(
+            Expanded(child: Text(text)),
+            if (toCopy != null && toCopy.isNotEmpty)
+              IconButton(
                 onPressed: () {
-                  Clipboard.setData(ClipboardData(text: value));
+                  Clipboard.setData(ClipboardData(text: toCopy));
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                     content: Text('Copied to clipboard!'),
@@ -267,7 +369,18 @@ class _HomeState extends State<Home> {
                 icon: const Icon(
                   Icons.copy,
                   size: 36,
-                ))
+                ),
+              ),
+            if (toUrl != null && toUrl.isNotEmpty)
+              IconButton(
+                onPressed: () {
+                  launchUrl(Uri.parse(toUrl));
+                },
+                icon: const Icon(
+                  Icons.open_in_browser,
+                  size: 36,
+                ),
+              ),
           ],
         ),
       ),
@@ -316,9 +429,15 @@ class _HomeState extends State<Home> {
     return Column(
       children: [
         CustomSwitchTile(
-            title: isReceiver ? "Receiver" : "Sender",
-            value: isReceiver,
-            onChanged: changeFrom),
+          title: isV2 ? "v2" : "v1",
+          value: isV2,
+          onChanged: changeV2,
+        ),
+        CustomSwitchTile(
+          title: isReceiver ? "Receiver" : "Sender",
+          value: isReceiver,
+          onChanged: changeFrom,
+        ),
         if (isReceiver) ...[
           buildReceiverFields(),
         ] else
@@ -328,25 +447,7 @@ class _HomeState extends State<Home> {
   }
 
   List<Widget> buildSenderFields() {
-    if (isRequestSent) {
-      return [
-        TextFieldContainer(
-          child: TextFormField(
-            controller: receiverPsbtController,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Please enter the receiver psbt';
-              }
-              return null;
-            },
-            style: Theme.of(context).textTheme.bodyLarge,
-            keyboardType: TextInputType.multiline,
-            maxLines: 5,
-            decoration: const InputDecoration(hintText: "Enter receiver psbt"),
-          ),
-        )
-      ];
-    } else {
+    if (reqCtx == null) {
       return [
         TextFieldContainer(
           child: TextFormField(
@@ -372,21 +473,45 @@ class _HomeState extends State<Home> {
           ),
         ),
       ];
+    } else {
+      if (!isV2) {
+        return [
+          TextFieldContainer(
+            child: TextFormField(
+              controller: receiverPsbtController,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter the receiver psbt';
+                }
+                return null;
+              },
+              style: Theme.of(context).textTheme.bodyLarge,
+              keyboardType: TextInputType.multiline,
+              maxLines: 5,
+              decoration:
+                  const InputDecoration(hintText: "Enter receiver psbt"),
+            ),
+          )
+        ];
+      }
+      return [];
     }
   }
 
   Widget buildReceiverFields() {
-    return pjUri == null
+    return pjUri.isEmpty
         ? buildFields()
-        : TextFieldContainer(
-            child: TextFormField(
-              controller: psbtController,
-              style: Theme.of(context).textTheme.bodyLarge,
-              keyboardType: TextInputType.multiline,
-              maxLines: 5,
-              decoration: const InputDecoration(hintText: "Enter psbt"),
-            ),
-          );
+        : isV2
+            ? Container()
+            : TextFieldContainer(
+                child: TextFormField(
+                  controller: psbtController,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  keyboardType: TextInputType.multiline,
+                  maxLines: 5,
+                  decoration: const InputDecoration(hintText: "Enter psbt"),
+                ),
+              );
   }
 
   Future performPayjoin(formKey) async {
@@ -401,66 +526,231 @@ class _HomeState extends State<Home> {
 
   //Sender
   Future performSender() async {
-    try {
-      if (!isRequestSent) {
-        String senderPsbt = (await bdkManager.buildPsbt(
-                wallet,
-                (await payjoinManager.stringToUri(pjUriController.text))
-                    .address(),
-                ((((await payjoinManager.stringToUri(pjUriController.text))
-                                .amount()) ??
-                            0) *
-                        100000000)
-                    .toInt(),
-                feeRange?.feeValue ?? FeeRangeEnum.high.feeValue))
-            .toString();
-        showBottomSheet(senderPsbt);
+    if (isV2) {
+      // Build payjoin request with original psbt and send it to the
+      //  payjoin directory where the receiver can poll it
+      final pjUri = await payjoinManager.stringToUri(pjUriController.text);
+      final originalPsbt = await payjoinManager.buildOriginalPsbt(
+        wallet,
+        pjUri,
+        feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+      );
+      final request = await payjoinManager.buildPayjoinRequest(
+        originalPsbt,
+        pjUri,
+        feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+      );
+      setState(() {
+        reqCtx = request;
+      });
+
+      // Request and keep polling the payjoin directoy for the proposal
+      //  from the receiver
+      String psbt = originalPsbt;
+      try {
+        psbt = await payjoinManager.requestAndPollV2Proposal(
+          reqCtx!,
+        );
+        debugPrint('Receiver proposed payjoin PSBT: $psbt');
+      } catch (e) {
+        // No proposal received, make a normal tx with the original psbt
+        debugPrint('No proposal received, broadcasting original tx');
+      }
+
+      // If a proposal is received, finalize the payjoin
+      final transaction = await payjoinManager.extractPjTx(wallet, psbt);
+      final txId = await blockchain.broadcast(transaction: transaction);
+      debugPrint('Broacasted tx: $txId');
+      resetPayjoinSession();
+
+      showBottomSheet(
+        '${psbt == originalPsbt ? 'Original tx with id' : 'Payjoin tx with id'} '
+        '$txId broadcasted!',
+        toCopy: txId,
+        toUrl: 'https://mutinynet.com/tx/$txId',
+      );
+    } else {
+      // Build V1 payjoin request with original psbt
+      if (reqCtx == null) {
+        final pjUri = await payjoinManager.stringToUri(pjUriController.text);
+        final originalPsbt = await payjoinManager.buildOriginalPsbt(
+          wallet,
+          pjUri,
+          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+        );
+        final request = await payjoinManager.buildPayjoinRequest(
+          originalPsbt,
+          pjUri,
+          feeRange?.feeValue ?? FeeRangeEnum.high.feeValue,
+        );
+        debugPrint('Original Sender PSBT: $originalPsbt');
 
         setState(() {
-          isRequestSent = true;
+          reqCtx = request;
         });
-      } // Finalize payjoin
-      else {
-        String receiverPsbt = receiverPsbtController.text;
+        showBottomSheet(originalPsbt, toCopy: originalPsbt);
+      } else {
+        // Finalize payjoin
+        final proposalPsbt = receiverPsbtController.text;
+        debugPrint('Receiver proposed PSBT: $proposalPsbt');
+        final checkedProposal =
+            await payjoinManager.processV1Proposal(reqCtx!, proposalPsbt);
+
         final transaction =
-            await bdkManager.extractTxFromPsbtString(wallet, receiverPsbt);
-        final txid = await blockchain.broadcast(transaction: transaction);
-        setState(() {
-          displayText = "PayJoin transaction successfully completed: $txid";
-        });
+            await payjoinManager.extractPjTx(wallet, checkedProposal);
+        String? txId;
+        try {
+          txId = await blockchain.broadcast(transaction: transaction);
+          debugPrint('TxId: $txId');
+        } catch (e) {
+          debugPrint('Error broadcasting tx: $e');
+        }
+
+        resetPayjoinSession();
+
+        if (txId != null) {
+          showBottomSheet(
+            txId,
+            toCopy: txId,
+            toUrl: 'https://mutinynet.com/tx/$txId',
+          );
+        } else {
+          showBottomSheet('Error broadcasting tx');
+        }
       }
-    } on Exception catch (e) {
-      debugPrint(e.toString());
     }
   }
 
   //Receiver
   Future performReceiver() async {
-    if (pjUri == null) {
-      buildReceiverPjUri();
-    } else {
-      final (String? receiverPsbt, contextV1) =
-          await payjoinManager.handlePjRequest(
-              psbtController.text, pjUri.checkPjSupported(), wallet);
-      if (receiverPsbt == null) {
-        return throw Exception("Response is null");
+    // Create a new payjoin uri (and session if v2)
+    try {
+      if (isV2) {
+        // Start a payjoin session and create a new payjoin uri
+        await initReceiverSession();
+
+        // Poll for requests made by the sender to this payjoin uri
+        final requestProposal = await payjoinManager.pollV2Request(v2Session!);
+        setState(() {
+          uncheckedProposal = requestProposal;
+        });
+
+        // Handle the request and send back the payjoin proposal
+        final (originalTx, proposedPayjoin) =
+            await payjoinManager.handleV2Request(requestProposal, wallet);
+        setState(() {
+          payjoinProposal = proposedPayjoin;
+        });
+        // Wait some time for the tx to be broadcasted
+        await Future.delayed(const Duration(seconds: 3));
+
+        // Wait for the original or payjoin tx to be broadcasted
+        final proposalTxId =
+            await payjoinManager.getTxIdFromPsbt(await proposedPayjoin.psbt());
+        final receivedTxId = await waitForTransaction(
+          originalTxId: await originalTx.txid(),
+          proposalTxId: proposalTxId,
+        );
+        resetPayjoinSession();
+
+        if (receivedTxId.isNotEmpty) {
+          showBottomSheet(
+            '${receivedTxId == proposalTxId ? 'Payjoin' : 'Original'} tx received!',
+          );
+        }
+      } else {
+        if (pjUri.isEmpty) {
+          await initReceiverSession();
+        } else {
+          // Handle payjoin request and send back the payjoin proposal
+          final proposalPsbt =
+              await payjoinManager.handleV1Request(psbtController.text, wallet);
+          if (proposalPsbt == null) {
+            return throw Exception("Response is null");
+          }
+          resetPayjoinSession();
+          showBottomSheet(proposalPsbt, toCopy: proposalPsbt);
+        }
       }
-      final checkedPayjoinProposal =
-          await contextV1.processResponse(response: utf8.encode(receiverPsbt));
-      showBottomSheet(checkedPayjoinProposal);
+    } catch (e) {
+      debugPrint(e.toString());
+      if (e is PayjoinException) {
+        // In a real app you would handle the error better
+        debugPrint(e.toString());
+        showBottomSheet('PayJoin error: ${e.message}');
+        resetPayjoinSession();
+      }
     }
   }
 
-  Future<void> buildReceiverPjUri() async {
-    String pjStr = await payjoinManager.buildPjStr(
-      double.parse(amountController.text),
-      recipientAddress.text,
-    );
-    payjoinManager.stringToUri(pjStr).then((value) {
+  Future<void> initReceiverSession() async {
+    String pjStr;
+    final amount = int.parse(amountController.text);
+    if (isV2) {
+      v2.ActiveSession session;
+      (pjStr, session) = await payjoinManager.buildV2PjStr(
+        amount: amount,
+        address: recipientAddress.text,
+        network: Network.signet,
+        expireAfter: 60 * 5, // 5 minutes
+      );
+
       setState(() {
-        displayText = pjStr;
-        pjUri = value;
+        v2Session = session;
       });
+    } else {
+      pjStr = await payjoinManager.buildV1PjStr(
+        amount,
+        recipientAddress.text,
+      );
+    }
+
+    setState(() {
+      displayText = pjStr;
+      pjUri = pjStr;
     });
+  }
+
+  Future<String> waitForTransaction({
+    required String originalTxId,
+    required String proposalTxId,
+    int timeout = 1,
+  }) async {
+    debugPrint('Waiting for payjoin tx to be sent...');
+    await syncWallet();
+    final txs = wallet.listTransactions(includeRaw: false);
+    try {
+      final tx = txs.firstWhere(
+          (tx) => tx.txid == originalTxId || tx.txid == proposalTxId);
+      debugPrint('Tx found: ${tx.txid}');
+      return tx.txid;
+    } catch (e) {
+      debugPrint('Tx not found, retrying after $timeout second(s)...');
+      if (reqCtx == null) {
+        // The session was canceled, stop polling
+        return '';
+      }
+      await Future.delayed(Duration(seconds: timeout));
+      return waitForTransaction(
+        originalTxId: originalTxId,
+        proposalTxId: proposalTxId,
+      );
+    }
+  }
+
+  void resetPayjoinSession() {
+    setState(() {
+      pjUri = '';
+      v2Session = null;
+      reqCtx = null;
+      uncheckedProposal = null;
+      payjoinProposal = null;
+    });
+    // Also clean the text controllers to start a new payjoin session
+    recipientAddress.clear();
+    amountController.clear();
+    pjUriController.clear();
+    receiverPsbtController.clear();
+    psbtController.clear();
   }
 }
