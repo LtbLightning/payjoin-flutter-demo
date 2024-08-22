@@ -283,7 +283,7 @@ class PayjoinManager {
   Future<bdk.Transaction> extractPjTx(
       bdk.Wallet senderWallet, String psbtString) async {
     final psbt = await bdk.PartiallySignedTransaction.fromString(psbtString);
-    print('PSBT before: ${psbt.asString()}');
+    debugPrint('PSBT before: ${psbt.toString()}');
     senderWallet.sign(
         psbt: psbt,
         signOptions: const bdk.SignOptions(
@@ -293,7 +293,7 @@ class PayjoinManager {
             tryFinalize: true,
             signWithTapInternalKey: true,
             allowGrinding: false));
-    print('PSBT after: ${psbt.asString()}');
+    debugPrint('PSBT after: ${psbt.toString()}');
     var transaction = psbt.extractTx();
     return transaction;
   }
@@ -479,7 +479,7 @@ class PayjoinManager {
 
   Future<String> _processPsbt(String preProcessed, bdk.Wallet wallet) async {
     final psbt = await bdk.PartiallySignedTransaction.fromString(preProcessed);
-    print('PSBT before: ${psbt.asString()}');
+    debugPrint('PSBT before: ${psbt.toString()}');
     await wallet.sign(
       psbt: psbt,
       signOptions: const bdk.SignOptions(
@@ -491,7 +491,7 @@ class PayjoinManager {
         allowGrinding: false,
       ),
     );
-    print('PSBT after: ${psbt.asString()}');
+    debugPrint('PSBT after: ${psbt.toString()}');
     return psbt.asString();
   }
 }
