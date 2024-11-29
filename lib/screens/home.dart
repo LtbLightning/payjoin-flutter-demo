@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:bdk_flutter/bdk_flutter.dart' as bdk;
 import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
@@ -102,8 +104,8 @@ class _HomeState extends State<Home> {
       setState(() {
         wallet = res;
       });
-      var addressInfo = await getNewAddress();
-      address = await addressInfo.address.asString();
+      var addressInfo = getNewAddress();
+      address = addressInfo.address.asString();
       setState(() {
         displayText = "Wallet Created: $address";
       });
@@ -126,13 +128,13 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Future<bdk.AddressInfo> getNewAddress() async {
-    final res = await wallet.getAddress(
-        addressIndex: const bdk.AddressIndex.increase());
+  bdk.AddressInfo getNewAddress() {
+    final res =
+        wallet.getAddress(addressIndex: const bdk.AddressIndex.increase());
     if (kDebugMode) {
       print(res.address);
     }
-    address = await res.address.asString();
+    address = res.address.asString();
     setState(() {
       displayText = address;
       if (isReceiver && address != null) {
@@ -278,8 +280,8 @@ class _HomeState extends State<Home> {
                       },
                     ),
                     SubmitButton(
-                        callback: () async {
-                          await getNewAddress();
+                        callback: () {
+                          getNewAddress();
                         },
                         text: "Get Address"),
                   ])),
@@ -473,7 +475,7 @@ class _HomeState extends State<Home> {
   Future performPayjoin(formKey) async {
     if (formKey.currentState!.validate()) {
       if (isReceiver) {
-        await performReceiver();
+        await performReceiver(receiverWallet: wallet);
       } else {
         await performSender();
       }
@@ -527,68 +529,95 @@ class _HomeState extends State<Home> {
   }
 
   //Receiver
-  Future performReceiver() async {
+  Future performReceiver({required bdk.Wallet receiverWallet}) async {
     try {
       await initReceiverSession();
 
-      // Extract and process request
-      final (request, clientResponse) = await v2Session!.extractReq();
-      debugPrint('EXTRACTED REQUEST');
+      final httpClient = HttpClient();
+      UncheckedProposal? proposal;
+      debugPrint('STARTING LOOP');
+      while (proposal == null) {
+        final (request, clientResponse) = await v2Session!.extractReq();
+        final url = Uri.parse(request.url.asString());
+        debugPrint('MAKING REQUEST TO URL: $url');
+        final httpRequest = await httpClient.postUrl(url);
+        debugPrint('REQUEST BODY: ${request.body}');
 
-      // Poll GET requests at the subdirectory
-      // TODO
+        httpRequest.headers.set('Content-Type', request.contentType);
+        debugPrint('WRITING REQUEST BODY');
 
-      // Process response and get proposal
-      final proposal =
-          await v2Session!.processRes(body: request.body, ctx: clientResponse);
+        httpRequest.add(request.body);
+        debugPrint('MAKING REQUEST TO URL: $url');
+
+        final response = await httpRequest.close();
+        debugPrint('READING RESPONSE');
+        final responseBody = await response.fold<List<int>>(
+            [], (previous, element) => previous..addAll(element));
+        final uint8Response = Uint8List.fromList(responseBody);
+        debugPrint('PROCESSING RESPONSE');
+        proposal = await v2Session!
+            .processRes(body: uint8Response, ctx: clientResponse);
+        debugPrint('PROCESSED RESPONSE');
+      }
 
       setState(() {
         uncheckedProposal = proposal;
       });
 
-      if (proposal != null) {
-        // Process the proposal through the various checks
-        final maybeInputsOwned = await proposal.assumeInteractiveReceiver();
+      // Process the proposal through the various checks
+      final maybeInputsOwned = await proposal.assumeInteractiveReceiver();
 
-        final maybeInputsSeen = await maybeInputsOwned.checkInputsNotOwned(
-            isOwned: (outpoint) async =>
-                false // Implement actual ownership check
-            );
+      final maybeInputsSeen = await maybeInputsOwned.checkInputsNotOwned(
+          isOwned: (outpoint) async => false // Implement actual ownership check
+          );
 
-        final outputsUnknown = await maybeInputsSeen.checkNoInputsSeenBefore(
-            isKnown: (outpoint) async => false // Implement actual seen check
-            );
+      final outputsUnknown = await maybeInputsSeen.checkNoInputsSeenBefore(
+          isKnown: (outpoint) async => false // Implement actual seen check
+          );
 
-        final wantsOutputs = await outputsUnknown.identifyReceiverOutputs(
-            isReceiverOutput: (script) async =>
-                false // Implement actual output check
-            );
+      final wantsOutputs = await outputsUnknown.identifyReceiverOutputs(
+          isReceiverOutput: (script) async =>
+              false // Implement actual output check
+          );
 
-        var wantsInputs = await wantsOutputs.commitOutputs();
+      var wantsInputs = await wantsOutputs.commitOutputs();
 
-        // Select and contribute inputs
-        final inputPair = await wantsInputs
-            .tryPreservingPrivacy(candidateInputs: [] // Add candidate inputs
-                );
+      // Select and contribute inputs
+      final inputPair = await wantsInputs.tryPreservingPrivacy(
+          candidateInputs: [] // FIXME: Add candidate inputs
+          );
 
-        wantsInputs =
-            await wantsInputs.contributeInputs(replacementInputs: [inputPair]);
-        final provisionalProposal = await wantsInputs.commitInputs();
+      wantsInputs =
+          await wantsInputs.contributeInputs(replacementInputs: [inputPair]);
+      final provisionalProposal = await wantsInputs.commitInputs();
 
-        final finalProposal = await provisionalProposal.finalizeProposal(
-            processPsbt: (psbt) async =>
-                psbt, // Implement actual PSBT processing
-            maxFeeRateSatPerVb: BigInt.from(25));
+      final finalProposal = await provisionalProposal.finalizeProposal(
+          processPsbt: (i) => payjoinManager.processPsbt(i, receiverWallet),
+          maxFeeRateSatPerVb: BigInt.from(25));
 
-        setState(() {
-          payjoinProposal = finalProposal;
-        });
+      setState(() {
+        payjoinProposal = finalProposal;
+      });
 
-        // Wait for transaction broadcast
-        final proposalPsbt = await finalProposal.psbt();
-        final proposalTxId = await payjoinManager.getTxIdFromPsbt(proposalPsbt);
-        // Handle broadcast...
-      }
+      // Wait for transaction broadcast
+      final proposalPsbt = await finalProposal.psbt();
+      final proposalTxId = await payjoinManager.getTxIdFromPsbt(proposalPsbt);
+      debugPrint('Receiver proposal tx: $proposalTxId');
+
+      // Send the proposal via POST request to directory
+      final (proposalReq, proposalCtx) = await finalProposal.extractV2Req();
+      final httpRequest = await httpClient.postUrl(
+        Uri.parse(proposalReq.url.asString()),
+      );
+      httpRequest.add(proposalReq.body);
+      httpRequest.headers.set('content-type', 'message/ohttp-req');
+      final response = await httpRequest.close();
+      final responseBody = await response.fold<List<int>>(
+        [],
+        (previous, element) => previous..addAll(element),
+      );
+      finalProposal.processRes(res: responseBody, ohttpContext: proposalCtx);
+      // Await sender broadcast...
     } catch (e) {
       debugPrint(e.toString());
       if (e is PayjoinException) {
@@ -608,7 +637,7 @@ class _HomeState extends State<Home> {
       ohttpRelay: ohttpRelay,
       payjoinDirectory: payjoinDirectory,
     );
-    debugPrint('OHTTP KEYS FETCHED');
+    debugPrint('OHTTP KEYS FETCHED ${ohttpKeys.toString()}');
     // Create receiver session with new bindings
     final receiver = await Receiver.create(
       address: recipientAddress.text,
@@ -620,7 +649,8 @@ class _HomeState extends State<Home> {
     );
     debugPrint('INITIALIZED RECEIVER');
 
-    final pjUrl = await receiver.pjUrl();
+    final pjUrl =
+        receiver.pjUriBuilder().amount(amount: BigInt.from(amount)).build();
     final pjStr = pjUrl.asString();
 
     setState(() {

@@ -352,7 +352,7 @@ class PayjoinManager {
     return wallet.isMine(script: script);
   }
 
-  Future<String> _processPsbt(String preProcessed, bdk.Wallet wallet) async {
+  Future<String> processPsbt(String preProcessed, bdk.Wallet wallet) async {
     final psbt = await bdk.PartiallySignedTransaction.fromString(preProcessed);
     debugPrint('PSBT before: ${psbt.toString()}');
     await wallet.sign(
