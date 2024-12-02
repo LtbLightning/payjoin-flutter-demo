@@ -340,9 +340,11 @@ packages:
   payjoin_flutter:
     dependency: "direct main"
     description:
-      path: "../payjoin-flutter"
-      relative: true
-    source: path
+      path: "."
+      ref: b3a7e3c
+      resolved-ref: b3a7e3c8b996186d44cebd39332a7a888be4509f
+      url: "https://github.com/DanGould/payjoin-flutter"
+    source: git
     version: "0.20.0"
   plugin_platform_interface:
     dependency: transitive
