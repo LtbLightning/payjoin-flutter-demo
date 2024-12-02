@@ -5,6 +5,7 @@ import 'package:bdk_flutter_demo/managers/payjoin_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:payjoin_flutter/bitcoin_ffi.dart';
 import 'package:payjoin_flutter/common.dart';
 import 'package:payjoin_flutter/receive.dart';
 import 'package:payjoin_flutter/send.dart';
@@ -535,29 +536,21 @@ class _HomeState extends State<Home> {
 
       final httpClient = HttpClient();
       UncheckedProposal? proposal;
-      debugPrint('STARTING LOOP');
       while (proposal == null) {
         final (request, clientResponse) = await v2Session!.extractReq();
         final url = Uri.parse(request.url.asString());
-        debugPrint('MAKING REQUEST TO URL: $url');
         final httpRequest = await httpClient.postUrl(url);
-        debugPrint('REQUEST BODY: ${request.body}');
 
         httpRequest.headers.set('Content-Type', request.contentType);
-        debugPrint('WRITING REQUEST BODY');
 
         httpRequest.add(request.body);
-        debugPrint('MAKING REQUEST TO URL: $url');
 
         final response = await httpRequest.close();
-        debugPrint('READING RESPONSE');
         final responseBody = await response.fold<List<int>>(
             [], (previous, element) => previous..addAll(element));
         final uint8Response = Uint8List.fromList(responseBody);
-        debugPrint('PROCESSING RESPONSE');
         proposal = await v2Session!
             .processRes(body: uint8Response, ctx: clientResponse);
-        debugPrint('PROCESSED RESPONSE');
       }
 
       setState(() {
@@ -568,24 +561,43 @@ class _HomeState extends State<Home> {
       final maybeInputsOwned = await proposal.assumeInteractiveReceiver();
 
       final maybeInputsSeen = await maybeInputsOwned.checkInputsNotOwned(
-          isOwned: (outpoint) async => false // Implement actual ownership check
+          isOwned: (outpoint) async =>
+              false // TODO Implement actual ownership check
           );
 
       final outputsUnknown = await maybeInputsSeen.checkNoInputsSeenBefore(
-          isKnown: (outpoint) async => false // Implement actual seen check
+          isKnown: (outpoint) async => false // TODO Implement actual seen check
           );
 
       final wantsOutputs = await outputsUnknown.identifyReceiverOutputs(
-          isReceiverOutput: (script) async =>
-              false // Implement actual output check
-          );
+          isReceiverOutput: (script) async {
+        return receiverWallet.isMine(script: bdk.ScriptBuf(bytes: script));
+      });
 
       var wantsInputs = await wantsOutputs.commitOutputs();
 
       // Select and contribute inputs
+      final unspent = receiverWallet.listUnspent();
+      List<InputPair> candidateInputs = [];
+      for (var input in unspent) {
+        final txout = TxOut(
+          value: input.txout.value,
+          scriptPubkey: input.txout.scriptPubkey.bytes,
+        );
+        final psbtin = PsbtInput(
+            witnessUtxo: txout, redeemScript: null, witnessScript: null);
+        final previousOutput = OutPoint(
+            txid: input.outpoint.txid.toString(), vout: input.outpoint.vout);
+        final txin = TxIn(
+            previousOutput: previousOutput,
+            scriptSig: await Script.newInstance(rawOutputScript: []),
+            witness: [],
+            sequence: 0);
+        final ip = await InputPair.newInstance(txin, psbtin);
+        candidateInputs.add(ip);
+      }
       final inputPair = await wantsInputs.tryPreservingPrivacy(
-          candidateInputs: [] // FIXME: Add candidate inputs
-          );
+          candidateInputs: candidateInputs);
 
       wantsInputs =
           await wantsInputs.contributeInputs(replacementInputs: [inputPair]);
@@ -609,8 +621,8 @@ class _HomeState extends State<Home> {
       final httpRequest = await httpClient.postUrl(
         Uri.parse(proposalReq.url.asString()),
       );
-      httpRequest.add(proposalReq.body);
       httpRequest.headers.set('content-type', 'message/ohttp-req');
+      httpRequest.add(proposalReq.body);
       final response = await httpRequest.close();
       final responseBody = await response.fold<List<int>>(
         [],
@@ -628,10 +640,10 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> initReceiverSession() async {
-    final amount = int.parse(amountController.text);
+    final amountSats = BigInt.parse(amountController.text);
+    debugPrint('AMOUNT SATS: $amountSats');
     final payjoinDirectory = await pjuri.Url.fromStr("https://payjo.in");
     final ohttpRelay = await pjuri.Url.fromStr("https://pj.bobspacebkk.com");
-    debugPrint('FETCHING OHTTP KEYS');
 
     final ohttpKeys = await pjuri.fetchOhttpKeys(
       ohttpRelay: ohttpRelay,
@@ -650,8 +662,9 @@ class _HomeState extends State<Home> {
     debugPrint('INITIALIZED RECEIVER');
 
     final pjUrl =
-        receiver.pjUriBuilder().amount(amount: BigInt.from(amount)).build();
+        receiver.pjUriBuilder().amountSats(amount: amountSats).build();
     final pjStr = pjUrl.asString();
+    debugPrint('PAYJOIN URL: $pjStr');
 
     setState(() {
       v2Session = receiver;

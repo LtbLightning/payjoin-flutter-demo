@@ -40,7 +40,7 @@ class PayjoinManager {
     required Network network,
     required int expireAfter,
   }) async {
-    final session = await _startV2ReceiveSession(
+    final session = await startV2ReceiveSession(
       address: address,
       network: network,
       expireAfter: expireAfter,
@@ -49,7 +49,7 @@ class PayjoinManager {
     final pjUriBuilder = session.pjUriBuilder();
     if (amount != null) {
       final pjUriBuilderWithAmount =
-          pjUriBuilder.amount(amount: BigInt.from(amount));
+          pjUriBuilder.amountSats(amount: BigInt.from(amount));
       final pjUri = pjUriBuilderWithAmount.build();
       pjUriStr = pjUri.asString();
     } else {
@@ -78,10 +78,9 @@ class PayjoinManager {
     final address = await bdk.Address.fromString(
         s: pjUri.address(), network: bdk.Network.signet);
     final script = address.scriptPubkey();
-    double uriAmount = pjUri.amount() ?? 0;
-    int amountSat = (uriAmount * 100000000.0).round();
+    BigInt uriAmount = pjUri.amountSats() ?? BigInt.zero;
     final (psbt, _) = await txBuilder
-        .addRecipient(script, BigInt.from(amountSat))
+        .addRecipient(script, uriAmount)
         .feeAbsolute(BigInt.from(fee))
         .finish(senderWallet);
     await senderWallet.sign(
@@ -109,7 +108,7 @@ class PayjoinManager {
     final senderBuilder = await send.SenderBuilder.fromPsbtAndUri(
         psbtBase64: originalPsbt, pjUri: pjUri.checkPjSupported());
     final sender =
-        await senderBuilder.buildRecommended(minFeeRate: BigInt.from(1));
+        await senderBuilder.buildRecommended(minFeeRate: BigInt.from(250));
 
     return sender;
   }
@@ -120,8 +119,7 @@ class PayjoinManager {
     debugPrint('Sending V2 Proposal Request...');
     try {
       // Extract the request and context once
-      final (request, post_ctx) = await sender.extractV2(
-        // FIXME use an actual relay
+      final (request, postCtx) = await sender.extractV2(
         ohttpProxyUrl: await pj_uri.Url.fromStr(ohttpRelay),
       );
 
@@ -135,15 +133,14 @@ class PayjoinManager {
       );
 
       // Process the server response to get the context
-      final get_ctx =
-          await post_ctx.processResponse(response: response.bodyBytes);
+      final getCtx =
+          await postCtx.processResponse(response: response.bodyBytes);
 
       // Loop to extract (request, ctx) from get_ctx
       while (true) {
         debugPrint('Polling for V2 Proposal...');
         try {
-          final (getReq, ohttpCtx) = await get_ctx.extractReq(
-            // FIXME use an actual relay
+          final (getReq, ohttpCtx) = await getCtx.extractReq(
             ohttpRelay: await pj_uri.Url.fromStr(ohttpRelay),
           );
 
@@ -157,7 +154,7 @@ class PayjoinManager {
           );
 
           // Process the loop response
-          final proposal = await get_ctx.processResponse(
+          final proposal = await getCtx.processResponse(
               response: loopResponse.bodyBytes, ohttpCtx: ohttpCtx);
 
           // If a valid proposal is received, return it
@@ -255,7 +252,7 @@ class PayjoinManager {
     return transaction;
   }
 
-  Future<receive.Receiver> _startV2ReceiveSession({
+  Future<receive.Receiver> startV2ReceiveSession({
     required String address,
     required Network network,
     required int expireAfter,
