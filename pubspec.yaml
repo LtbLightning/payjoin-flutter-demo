@@ -14,7 +14,8 @@ dependencies:
     sdk: flutter
   http: ^1.2.1
   payjoin_flutter:
-    path: ../payjoin-flutter
+    url: https://github.com/DanGould/payjoin-flutter
+    ref: b3a7e3c # dangould payjoin-21 branch
   url_launcher: ^6.3.0
 dev_dependencies:
   flutter_lints: ^2.0.0
